@@ -1,0 +1,8 @@
+# Persistent data (models, WebUI config, chat history)
+data/ollama/*
+data/webui/*
+!data/ollama/.gitkeep
+!data/webui/.gitkeep
+
+# ZIM files (large offline knowledge archives)
+zim/*.zim

@@ -1,0 +1,31 @@
+model_list:
+  # Route through Open WebUI's OpenAI-compatible API
+  # This lets API callers access Open WebUI's pipelines, filters, and tools
+  #
+  # Models use their Ollama names as they appear in Open WebUI
+  # Change these to match the models you've pulled into Ollama
+
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: openai/qwen2.5-coder:14b
+      api_base: http://krull-webui:8080
+      api_key: "none"
+
+  - model_name: claude-opus-4-20250514
+    litellm_params:
+      model: openai/qwen2.5-coder:14b
+      api_base: http://krull-webui:8080
+      api_key: "none"
+
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: openai/qwen2.5-coder:14b
+      api_base: http://krull-webui:8080
+      api_key: "none"
+
+  # Add more model mappings as needed:
+  # - model_name: claude-sonnet-4-20250514
+  #   litellm_params:
+  #     model: openai/deepseek-coder-v2:16b
+  #     api_base: http://krull-webui:8080
+  #     api_key: "none"

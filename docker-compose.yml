@@ -1,0 +1,78 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: krull-ollama
+    restart: unless-stopped
+    tty: true
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: krull-webui
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - ./data/webui:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://krull-ollama:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-generate-a-real-key}
+      - WEBUI_AUTH=False
+      # Web search via SearXNG
+      - ENABLE_RAG_WEB_SEARCH=True
+      - RAG_WEB_SEARCH_ENGINE=searxng
+      - RAG_WEB_SEARCH_RESULT_COUNT=5
+      - SEARXNG_QUERY_URL=http://krull-searxng:8080/search?q=<query>
+      # Playwright for full page fetching
+      - RAG_WEB_LOADER_ENGINE=playwright
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: krull-searxng
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    container_name: krull-litellm
+    depends_on:
+      - open-webui
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm:/app/config
+    command: ["--config", "/app/config/config.yaml", "--port", "4000"]
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-dev-key}
+
+  kiwix:
+    image: ghcr.io/kiwix/kiwix-serve:latest
+    container_name: krull-kiwix
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./zim:/data:ro
+    command: "*.zim --address=all"
+
