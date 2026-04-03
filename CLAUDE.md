@@ -19,7 +19,8 @@ Krull AI is a self-hosted AI stack combining chat UI, LLM inference, web search,
 ./scripts/setup.sh              # Provision inlet filters into Open WebUI (run once)
 ./scripts/stop.sh               # Stop all services (data preserved)
 ./scripts/update.sh             # Pull latest images + force-recreate containers
-./scripts/download-wikipedia.sh [mini|nopic|medicine|full]  # Download ZIM files for Kiwix
+./scripts/download-wikipedia.sh [mini|nopic|medicine|full]  # Download Wikipedia ZIM files
+./scripts/download-knowledge.sh [package|bundle ...]        # Download dev docs, Stack Exchange, etc.
 docker restart krull-kiwix      # Required after downloading new ZIM files
 ```
 

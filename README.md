@@ -8,11 +8,11 @@ Krull AI is designed to work as a local backend for [Claude Code](https://claude
 
 | Service | What it does | URL |
 |---|---|---|
-| **Open WebUI** | Browser-based chat interface with RAG, tools, and pipelines | http://localhost:3000 |
+| **Open WebUI** | Browser-based chat interface with RAG, tools, and pipelines | <http://localhost:3000> |
 | **Ollama** | Runs LLM models on your GPU | internal |
-| **LiteLLM** | API gateway so Claude Code can talk to your local models | http://localhost:4000 |
+| **LiteLLM** | API gateway so Claude Code can talk to your local models | <http://localhost:4000> |
 | **SearXNG** | Web search aggregator (Google, DuckDuckGo, Brave) — no API keys needed | internal |
-| **Kiwix** | Offline Wikipedia and knowledge base | http://localhost:8090 |
+| **Kiwix** | Offline Wikipedia and knowledge base | <http://localhost:8090> |
 
 ## Prerequisites
 
@@ -33,6 +33,7 @@ cd krull-ai
 ```
 
 The first run will:
+
 - Verify all dependencies are installed
 - Pull Docker images (~10 GB total)
 - Start all five services
@@ -51,10 +52,10 @@ You need at least one LLM model. Pick one based on your GPU memory:
 Pull it through the CLI:
 
 ```bash
-docker exec krull-ollama ollama pull qwen2.5-coder:14b
+docker exec krull-ollama ollama pull qwen2.5:3b
 ```
 
-Or through the Open WebUI browser interface at http://localhost:3000 under **Settings > Models**.
+Or through the Open WebUI browser interface at <http://localhost:3000> under **Settings > Models**.
 
 ### 3. Provision the filters
 
@@ -66,20 +67,43 @@ This installs intelligent filters into Open WebUI that enhance your local model'
 
 ### 4. (Optional) Download offline knowledge
 
-For offline access to Wikipedia:
+A small Wikipedia mini (~5 MB) is downloaded automatically on first run. You can add more:
+
+**Wikipedia:**
 
 ```bash
-./scripts/download-wikipedia.sh mini        # Top 100 articles (~5 MB, quick test)
 ./scripts/download-wikipedia.sh medicine    # Medical articles (~2 GB)
 ./scripts/download-wikipedia.sh nopic       # All articles, no images (~25 GB)
 ./scripts/download-wikipedia.sh full        # Everything with images (~115 GB)
+```
 
-docker restart krull-kiwix                  # Reload after downloading
+**Developer docs, Stack Exchange, and more:**
+
+```bash
+./scripts/download-knowledge.sh dev-essentials      # Python, JS, TS, Node, Git, Docker, Bash (~50 MB)
+./scripts/download-knowledge.sh web-dev              # JS, TS, React, CSS, HTML, Node (~25 MB)
+./scripts/download-knowledge.sh data-science         # Python, NumPy, Pandas, Scikit-learn (~75 MB)
+./scripts/download-knowledge.sh sysadmin             # Arch Wiki, Unix & Server Q&A (~5.5 GB)
+./scripts/download-knowledge.sh community            # Unix, Code Review, Security, SoftEng Q&A (~5 GB)
+```
+
+Or pick individual packages:
+
+```bash
+./scripts/download-knowledge.sh devdocs-python devdocs-rust archlinux
+```
+
+Run `./scripts/download-knowledge.sh` with no arguments to see the full catalog.
+
+After downloading, restart Kiwix to load new content:
+
+```bash
+docker restart krull-kiwix
 ```
 
 ### 5. Start chatting
 
-Open http://localhost:3000 in your browser. Select your model and start a conversation.
+Open <http://localhost:3000> in your browser. Select your model and start a conversation.
 
 ## Using with Claude Code
 
@@ -138,7 +162,7 @@ Map as many Claude model names as you want. The `openai/` prefix tells LiteLLM t
                   (translates API format)
 ```
 
-**Browser path:** You chat directly in Open WebUI at http://localhost:3000. Filters, RAG, and web search are built in.
+**Browser path:** You chat directly in Open WebUI at <http://localhost:3000>. Filters, RAG, and web search are built in.
 
 **Claude Code path:** Claude Code speaks Anthropic API format. LiteLLM translates it to OpenAI format and routes it through Open WebUI. This means your local model gets the same filters, tools, and knowledge that the browser UI provides.
 
@@ -177,6 +201,7 @@ Key settings you may want to tune:
 | `scripts/stop.sh` | Stops all services. Data is preserved. |
 | `scripts/update.sh` | Pulls latest Docker images and recreates containers. Data is preserved. |
 | `scripts/download-wikipedia.sh` | Downloads Wikipedia ZIM files for offline access via Kiwix. |
+| `scripts/download-knowledge.sh` | Downloads developer docs, Stack Exchange, Arch Wiki, and other knowledge bases. Run with no args to see the full catalog. |
 
 ## Data and Persistence
 
