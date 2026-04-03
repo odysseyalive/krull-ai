@@ -74,5 +74,14 @@ services:
       - "8090:8080"
     volumes:
       - ./zim:/data:ro
-    command: "*.zim --address=all"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if ls /data/*.zim 1>/dev/null 2>&1; then
+          exec kiwix-serve /data/*.zim --address=all --port=8080
+        else
+          echo "No ZIM files found in /data/. Waiting for files..."
+          while ! ls /data/*.zim 1>/dev/null 2>&1; do sleep 30; done
+          exec kiwix-serve /data/*.zim --address=all --port=8080
+        fi
 

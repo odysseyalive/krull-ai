@@ -135,11 +135,13 @@ else
     install_hint nvidia-container-toolkit
 fi
 
-# Check for ZIM files
+# Check for ZIM files — auto-download mini if none exist
 ZIM_COUNT=$(find "$PROJECT_DIR/zim" -name "*.zim" 2>/dev/null | wc -l)
 if [ "$ZIM_COUNT" -eq 0 ]; then
-    echo "[!] No ZIM files found in zim/. Kiwix will start but have no content."
-    echo "    Download ZIM files from https://download.kiwix.org/zim/"
+    echo "[!] No ZIM files found. Downloading Wikipedia Mini (~5 MB)..."
+    "$SCRIPT_DIR/download-wikipedia.sh" mini
+    echo ""
+    echo "    Upgrade later with: ./scripts/download-wikipedia.sh medicine|nopic|full"
 else
     echo "[+] Found $ZIM_COUNT ZIM file(s) in zim/"
 fi
