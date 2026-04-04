@@ -127,12 +127,19 @@ if ! docker info &> /dev/null; then
     exit 1
 fi
 
-# Check NVIDIA
-if docker info 2>/dev/null | grep -qi nvidia; then
-    echo "[+] NVIDIA GPU runtime detected"
+# Check NVIDIA — verify both the container runtime AND that the driver is actually loaded
+COMPOSE_FILES="-f $PROJECT_DIR/docker-compose.yml"
+if docker info 2>/dev/null | grep -qi nvidia && nvidia-smi &>/dev/null; then
+    echo "[+] NVIDIA GPU available (driver loaded)"
+    COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.gpu.yml"
 else
-    echo "[!] WARNING: NVIDIA runtime not detected. Ollama will use CPU only."
-    install_hint nvidia-container-toolkit
+    echo "[!] NVIDIA GPU not available — Ollama will use CPU only."
+    if ! docker info 2>/dev/null | grep -qi nvidia; then
+        install_hint nvidia-container-toolkit
+    elif ! nvidia-smi &>/dev/null; then
+        echo "    nvidia-container-toolkit is installed but the driver is not loaded."
+        echo "    Check: sudo modprobe nvidia  or reboot after a kernel/driver update."
+    fi
 fi
 
 # Check for ZIM files — auto-download mini if none exist
@@ -147,12 +154,71 @@ else
 fi
 
 echo ""
-echo "Pulling latest images..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" pull
+
+# Only pull images if they haven't been pulled yet (first run)
+NEEDS_PULL=0
+while IFS= read -r img; do
+    if ! docker image inspect "$img" &>/dev/null; then
+        NEEDS_PULL=1
+        break
+    fi
+done < <(docker compose $COMPOSE_FILES config --images 2>/dev/null)
+
+if [ "$NEEDS_PULL" -eq 1 ]; then
+    echo "Pulling images (first run)..."
+    docker compose $COMPOSE_FILES pull
+else
+    echo "[+] All images present (use ./scripts/update.sh to pull latest)"
+fi
+
+# Ensure bind-mount directories exist with correct ownership
+mkdir -p "$PROJECT_DIR/data/ollama" "$PROJECT_DIR/data/webui" "$PROJECT_DIR/data/tiles" "$PROJECT_DIR/data/photon"
+mkdir -p "$PROJECT_DIR/searxng"
+
+# Write default SearXNG config if it doesn't exist
+if [ ! -f "$PROJECT_DIR/searxng/settings.yml" ]; then
+    cat > "$PROJECT_DIR/searxng/settings.yml" << 'SEARXNG_EOF'
+use_default_settings: true
+
+server:
+  secret_key: "krull-searxng-secret-change-me"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+SEARXNG_EOF
+fi
 
 echo ""
 echo "Starting services..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d
+docker compose $COMPOSE_FILES up -d
 
 echo ""
 echo "Waiting for services to be ready..."

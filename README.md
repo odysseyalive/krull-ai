@@ -14,7 +14,7 @@ A self-hosted AI stack that runs entirely on your own hardware. Local inference,
 | **Ollama** | GPU-accelerated LLM inference | internal |
 | **LiteLLM** | API gateway so Claude Code can talk to local models | <http://localhost:4000> |
 | **SearXNG** | Web search aggregator (Google, DuckDuckGo, Brave) | internal |
-| **TileServer GL** | Offline map tiles (OpenStreetMap) | <http://localhost:8070> |
+| **Martin** | Offline map tiles (OpenStreetMap via PMTiles) | <http://localhost:8070> |
 | **Photon** | Offline geocoding and place search | internal |
 | **Kiwix** | Offline Wikipedia and knowledge archives | <http://localhost:8090> |
 
@@ -104,9 +104,9 @@ Run `./scripts/download-knowledge.sh` with no arguments to see the full catalog.
 **Offline maps:**
 
 ```bash
-./scripts/download-maps.sh oregon      # ~300 MB
-./scripts/download-maps.sh us-west     # ~2 GB
-./scripts/download-maps.sh us          # ~8 GB
+./scripts/download-maps.sh oregon      # ~100 MB (extracted via HTTP range requests)
+./scripts/download-maps.sh us-west     # ~800 MB
+./scripts/download-maps.sh us          # ~3 GB
 docker restart krull-tileserver
 ```
 
@@ -220,7 +220,7 @@ Settings you might want to tune:
 | `scripts/update.sh` | Pulls latest images and recreates containers. Your data stays. |
 | `scripts/download-wikipedia.sh` | Downloads Wikipedia ZIM files for Kiwix |
 | `scripts/download-knowledge.sh` | Downloads dev docs, Stack Exchange, Arch Wiki, and more |
-| `scripts/download-maps.sh` | Downloads OpenStreetMap tiles for offline maps |
+| `scripts/download-maps.sh` | Downloads OpenStreetMap tiles (PMTiles via Protomaps) for offline maps |
 
 ## Data and Persistence
 
@@ -230,7 +230,7 @@ Everything lives in local directories. Not Docker volumes. Not ephemeral storage
 |---|---|
 | `data/ollama/` | Downloaded LLM models |
 | `data/webui/` | Chat history, documents, settings, RAG embeddings |
-| `data/mbtiles/` | OpenStreetMap tile data |
+| `data/tiles/` | OpenStreetMap tile data (PMTiles format) |
 | `data/photon/` | Photon geocoding index |
 | `functions/` | Inlet filter source code (Python) |
 | `sample_prompts/` | Example system prompts for Open WebUI |

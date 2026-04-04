@@ -8,14 +8,6 @@ services:
       - ./data/ollama:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities:
-                - gpu
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -91,23 +83,34 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-dev-key}
 
   tileserver:
-    image: maptiler/tileserver-gl-light:latest
+    image: ghcr.io/maplibre/martin:latest
     container_name: krull-tileserver
     restart: unless-stopped
-    ports:
-      - "8070:8080"
     volumes:
-      - ./data/mbtiles:/data:ro
+      - ./data/tiles:/data:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        if ls /data/*.mbtiles 1>/dev/null 2>&1; then
-          exec node /usr/src/app/ -p 8080
+        has_tiles() { ls /data/*.pmtiles 1>/dev/null 2>&1 || ls /data/*.mbtiles 1>/dev/null 2>&1; }
+        if has_tiles; then
+          exec martin /data
         else
-          echo "No .mbtiles files found in /data/. Waiting for files..."
-          while ! ls /data/*.mbtiles 1>/dev/null 2>&1; do sleep 30; done
-          exec node /usr/src/app/ -p 8080
+          echo "No tile files found in /data/. Waiting for .pmtiles or .mbtiles files..."
+          while ! has_tiles; do sleep 30; done
+          exec martin /data
         fi
+
+  map-viewer:
+    image: nginx:alpine
+    container_name: krull-map-viewer
+    depends_on:
+      - tileserver
+    restart: unless-stopped
+    ports:
+      - "8070:80"
+    volumes:
+      - ./map-viewer:/usr/share/nginx/html:ro
+      - ./map-viewer/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
   photon:
     image: rtuszik/photon-docker:latest

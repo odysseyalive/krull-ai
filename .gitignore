@@ -4,12 +4,25 @@ data/webui/*
 !data/ollama/.gitkeep
 !data/webui/.gitkeep
 data/mbtiles/*
+data/tiles/*
 data/photon/*
 !data/mbtiles/.gitkeep
+!data/tiles/.gitkeep
 !data/photon/.gitkeep
+
+# SearXNG config (generated at startup, container writes as different UID)
+searxng/
 
 # ZIM files (large offline knowledge archives)
 zim/*.zim
+
+# Map viewer assets (downloaded at setup time)
+map-viewer/lib/
+map-viewer/fonts/
+map-viewer/style-*.json
+
+# Local binaries (pmtiles CLI, etc.)
+.local/
 
 # Claude Code local config and skills (user-specific)
 .claude/
