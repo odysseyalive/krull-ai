@@ -44,15 +44,24 @@ You need at least one LLM. Pick based on your GPU memory:
 
 | Model | VRAM | Good for |
 |---|---|---|
-| `qwen2.5:3b` | ~3 GB | Quick responses, lighter hardware |
-| `qwen2.5-coder:7b` | ~6 GB | Coding with decent context |
-| `qwen2.5-coder:14b` | ~12 GB | Best coding quality |
+| `frob/qwen3.5-instruct:4b` | ~3 GB | Quick responses, lighter hardware |
+| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended** — coding + tool calling |
+| `frob/qwen3.5-instruct:27b` | ~16 GB | Best quality (needs beefy GPU) |
 
 ```bash
-docker exec krull-ollama ollama pull qwen2.5:3b
+./scripts/pull-model.sh frob/qwen3.5-instruct:9b
 ```
 
-Or pull through the browser at <http://localhost:3000> under **Settings > Models**.
+This pulls the model and applies tuned parameters (temperature 0.7, top_p 0.8) that work well with system prompts and thinking mode. The defaults ship at temperature 1.0, which is too hot for persona-driven use.
+
+> **Why this model?** The `frob/qwen3.5-instruct` variant is qwen3.5 with thinking mode disabled — same weights, same quality, but faster responses without `<think>` blocks. It produces proper Anthropic-style `tool_use` blocks, which Claude Code requires. The qwen2.5-coder models output tool calls as JSON text instead, which breaks tool calling entirely.
+
+You can pull multiple models at once, or override parameters:
+
+```bash
+./scripts/pull-model.sh frob/qwen3.5-instruct:9b frob/qwen3.5-instruct:27b        # Pull multiple
+TEMPERATURE=0.6 ./scripts/pull-model.sh frob/qwen3.5-instruct:9b     # Override temp for coding
+```
 
 ### 3. Provision the filters
 
@@ -110,24 +119,34 @@ This got me thinking. What if you could keep coding with Claude Code even when t
 ### Connect Claude Code to your local stack
 
 ```bash
-# ANTHROPIC_API_KEY must match LITELLM_MASTER_KEY in docker-compose.yml
-ANTHROPIC_BASE_URL=http://localhost:4000 ANTHROPIC_API_KEY=sk-local-dev-key claude
+ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
+ANTHROPIC_BASE_URL=http://localhost:4000 \
+DISABLE_TELEMETRY=1 \
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+claude
 ```
+
+> **Note:** `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) skips Claude Code's login screen. The telemetry flags prevent Claude Code from hitting Ollama's unsupported `/v1/messages/count_tokens` endpoint, which causes cascading failures.
 
 ### Configure model mapping
 
 Claude Code sends requests using Anthropic model names. LiteLLM maps them to your local models. Edit `litellm/config.yaml`:
 
 ```yaml
+general_settings:
+  allow_requests_on_db_unavailable: true
+
+litellm_settings:
+  drop_params: true
+
 model_list:
-  - model_name: claude-sonnet-4-20250514
+  - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/qwen2.5-coder:14b
-      api_base: http://krull-webui:8080    # Docker internal URL (not localhost)
-      api_key: "none"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434    # Docker internal URL (not localhost)
 ```
 
-> **Note:** `api_base` uses `http://krull-webui:8080` because containers talk to each other by name inside Docker's network. From your browser, Open WebUI is at <http://localhost:3000>. No host file changes needed.
+> **Note:** The `ollama_chat/` provider is required for tool calling — it translates between Anthropic's `tool_use` format and Ollama's format. The `openai/` provider does not support this. `drop_params: true` silently drops Anthropic-specific parameters (like `cache_control`) that Ollama doesn't support. `allow_requests_on_db_unavailable` prevents "No connected db" errors since we run without a database.
 
 ### What works with local models
 
@@ -195,6 +214,7 @@ Settings you might want to tune:
 | Script | What it does |
 |---|---|
 | `scripts/start.sh` | Checks dependencies (with OS-specific install hints), pulls images, starts everything |
+| `scripts/pull-model.sh` | Pulls Ollama models with tuned parameters (temp 0.7, top_p 0.8) |
 | `scripts/setup.sh` | Installs filters into Open WebUI, enables them globally. Run once after first install. |
 | `scripts/stop.sh` | Stops all services. Your data stays. |
 | `scripts/update.sh` | Pulls latest images and recreates containers. Your data stays. |
@@ -228,12 +248,14 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 **Services won't start:** Run `./scripts/start.sh`. It checks everything and tells you what's missing.
 
-**Model not responding:** Pull at least one model first: `docker exec krull-ollama ollama pull qwen2.5-coder:7b`
+**Model not responding:** Pull at least one model first: `docker exec krull-ollama ollama pull frob/qwen3.5-instruct:9b`
 
-**Claude Code can't connect:** Check that LiteLLM is running (`docker logs krull-litellm`) and that your model name in `litellm/config.yaml` matches what Claude Code expects.
+**Claude Code can't connect:** Check that LiteLLM is running (`docker logs krull-litellm`) and that your model name in `litellm/config.yaml` matches what Claude Code expects. Use `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) to skip the login screen.
+
+**"No connected db" error:** Make sure `litellm/config.yaml` has `general_settings.allow_requests_on_db_unavailable: true`. This is required because LiteLLM runs without a database in this stack.
 
 **Filters not working:** Run `./scripts/setup.sh` again. Check **Admin Panel > Functions** in Open WebUI to verify they're listed and enabled.
 
-**Out of GPU memory:** Try a smaller model or a quantized variant like `qwen2.5-coder:7b-instruct-q4_K_M`.
+**Out of GPU memory:** Try a smaller model (`frob/qwen3.5-instruct:4b`) or a quantized variant like `frob/qwen3.5-instruct:9b-q4_K_M`.
 
 **Starting fresh:** `docker compose down` stops everything. Data in `data/` is preserved. To truly wipe: delete the `data/` directory and run `start.sh` again.

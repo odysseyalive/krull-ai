@@ -158,6 +158,16 @@ echo ""
 echo "Waiting for services to be ready..."
 sleep 5
 
+# Auto-pull frob/qwen3.5-instruct:9b if not present (recommended model for tool calling)
+if docker exec krull-ollama ollama list 2>/dev/null | grep -q "frob/qwen3.5-instruct:9b"; then
+    echo "[+] frob/qwen3.5-instruct:9b model found"
+else
+    echo "[!] frob/qwen3.5-instruct:9b not found. Pulling recommended model (~6.6 GB)..."
+    "$SCRIPT_DIR/pull-model.sh" frob/qwen3.5-instruct:9b
+fi
+
+echo ""
+
 # Check each service
 for svc in krull-ollama krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix; do
     STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")

@@ -35,7 +35,13 @@ class Filter:
 
         date_message = {
             "role": "system",
-            "content": f"Current date: {date_str}. Current time: {time_str}.",
+            "content": (
+                f"Today's date is {date_str}. The current time is {time_str}. "
+                f"This is a verified fact from the server clock, not a guess. "
+                f"You MUST treat this as the actual current date when answering questions. "
+                f"Do NOT say your data is outdated or that you cannot verify the date. "
+                f"The date is {date_str}."
+            ),
         }
 
         # Insert at the very beginning

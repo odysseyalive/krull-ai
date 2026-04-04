@@ -1,50 +1,47 @@
+general_settings:
+  allow_requests_on_db_unavailable: true
+
+litellm_settings:
+  drop_params: true
+
 model_list:
-  # Route through Open WebUI's OpenAI-compatible API
-  # This lets API callers access Open WebUI's pipelines, filters, and tools
+  # Route Claude Code requests to Ollama via ollama_chat/ provider
+  # The ollama_chat/ provider handles Anthropic↔Ollama tool calling translation
+  # This gives proper tool_use blocks with id, name, input fields
   #
-  # Models use their Ollama names as they appear in Open WebUI
-  # Change these to match the models you've pulled into Ollama
-  #
-  # NOTE: api_base uses Docker's internal hostname (krull-webui:8080), NOT localhost.
+  # NOTE: api_base uses Docker's internal hostname (krull-ollama:11434), NOT localhost.
   # Containers talk to each other by name inside Docker's network.
-  # From your browser, Open WebUI is at http://localhost:3000
 
   # Sonnet — current and legacy model IDs
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/qwen2.5-coder:7b
-      api_base: http://krull-webui:8080/api
-      api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/qwen2.5-coder:7b
-      api_base: http://krull-webui:8080/api
-      api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434
 
   # Opus — current and legacy model IDs
   - model_name: claude-opus-4-6
     litellm_params:
-      model: openai/qwen2.5-coder:7b
-      api_base: http://krull-webui:8080/api
-      api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434
 
   - model_name: claude-opus-4-20250514
     litellm_params:
-      model: openai/qwen2.5-coder:7b
-      api_base: http://krull-webui:8080/api
-      api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434
 
   # Haiku
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: openai/qwen2.5-coder:7b
-      api_base: http://krull-webui:8080/api
-      api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+      model: ollama_chat/frob/qwen3.5-instruct:9b
+      api_base: http://krull-ollama:11434
 
   # Add more model mappings as needed:
   # - model_name: claude-sonnet-4-6
   #   litellm_params:
-  #     model: openai/deepseek-coder-v2:16b
-  #     api_base: http://krull-webui:8080/api
-  #     api_key: "sk-7fc7e975475c4570818f37845a2af6f6"
+  #     model: ollama_chat/qwen3.5:27b
+  #     api_base: http://krull-ollama:11434

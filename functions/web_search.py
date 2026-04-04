@@ -6,6 +6,7 @@ the top results into the context before the model responds.
 
 import urllib.parse
 import json
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -48,9 +49,17 @@ class Filter:
         try:
             import aiohttp
 
+            # Add date context to searches about recent/latest/current events
+            search_query = query
+            recency_words = ["latest", "recent", "current", "today", "new", "now", "update"]
+            if any(word in query.lower() for word in recency_words):
+                now = datetime.now()
+                date_suffix = now.strftime("%B %Y")
+                search_query = f"{query} {date_suffix}"
+
             search_url = (
                 f"{self.valves.searxng_url}/search"
-                f"?q={urllib.parse.quote(query)}"
+                f"?q={urllib.parse.quote(search_query)}"
                 f"&format=json"
                 f"&categories=general"
             )
@@ -65,7 +74,10 @@ class Filter:
             if not results:
                 return body
 
-            context_lines = ["[Web Search Results]"]
+            now = datetime.now()
+            date_str = now.strftime("%B %d, %Y")
+
+            context_lines = [f"[Web Search Results — retrieved {date_str}]"]
             for i, r in enumerate(results, 1):
                 title = r.get("title", "")
                 url = r.get("url", "")
@@ -74,11 +86,12 @@ class Filter:
             context_lines.append("[End Web Search Results]")
             context_lines.append("")
             context_lines.append(
-                "IMPORTANT: When using information from the search results above, "
-                "you MUST cite your sources. Reference them inline (e.g., "
+                "IMPORTANT: The search results above are LIVE results retrieved "
+                f"just now on {date_str}. This information is current and "
+                "supersedes your training data. You MUST use these results to "
+                "answer the question. Cite your sources inline (e.g., "
                 "\"according to [Title](URL)...\") and include a References "
-                "section at the end of your response with the titles and URLs "
-                "of all sources you used."
+                "section at the end."
             )
             context_lines.append("")
 

@@ -10,3 +10,7 @@ data/photon/*
 
 # ZIM files (large offline knowledge archives)
 zim/*.zim
+
+# Claude Code local config and skills (user-specific)
+.claude/
+CLAUDE.md
