@@ -4,22 +4,26 @@ model_list:
   #
   # Models use their Ollama names as they appear in Open WebUI
   # Change these to match the models you've pulled into Ollama
+  #
+  # NOTE: api_base uses Docker's internal hostname (krull-webui:8080), NOT localhost.
+  # Containers talk to each other by name inside Docker's network.
+  # From your browser, Open WebUI is at http://localhost:3000
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/qwen2.5-coder:14b
+      model: openai/qwen2.5-coder:7b
       api_base: http://krull-webui:8080
       api_key: "none"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
-      model: openai/qwen2.5-coder:14b
+      model: openai/qwen2.5-coder:7b
       api_base: http://krull-webui:8080
       api_key: "none"
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: openai/qwen2.5-coder:14b
+      model: openai/qwen2.5-coder:7b
       api_base: http://krull-webui:8080
       api_key: "none"
 

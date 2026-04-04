@@ -25,7 +25,12 @@ CATALOG=(
     "devdocs-bash|devdocs/devdocs_en_bash_2026-01.zim|Bash reference|1 MB"
     "devdocs-css|devdocs/devdocs_en_css_2026-01.zim|CSS reference|8 MB"
     "devdocs-html|devdocs/devdocs_en_html_2026-01.zim|HTML reference|3 MB"
-    "devdocs-sql|devdocs/devdocs_en_postgresql_2026-01.zim|PostgreSQL docs|15 MB"
+    "devdocs-php|devdocs/devdocs_en_php_2026-02.zim|PHP documentation|15 MB"
+    "devdocs-phpunit|devdocs/devdocs_en_phpunit_2026-02.zim|PHPUnit testing framework|2 MB"
+    "devdocs-mariadb|devdocs/devdocs_en_mariadb_2026-01.zim|MariaDB/MySQL docs|10 MB"
+    "devdocs-postgresql|devdocs/devdocs_en_postgresql_2026-01.zim|PostgreSQL docs|15 MB"
+    "devdocs-sqlite|devdocs/devdocs_en_sqlite_2026-01.zim|SQLite docs|2 MB"
+    "devdocs-redis|devdocs/devdocs_en_redis_2026-01.zim|Redis docs|3 MB"
     "devdocs-numpy|devdocs/devdocs_en_numpy_2026-01.zim|NumPy docs|5 MB"
     "devdocs-pandas|devdocs/devdocs_en_pandas_2026-01.zim|Pandas docs|12 MB"
     "devdocs-scikit|devdocs/devdocs_en_scikit-learn_2026-01.zim|Scikit-learn docs|54 MB"
@@ -57,8 +62,8 @@ print_bundles() {
     echo "  dev-essentials    Core developer docs (~50 MB)"
     echo "                    python, javascript, typescript, node, git, docker, bash"
     echo ""
-    echo "  web-dev           Web development stack (~25 MB)"
-    echo "                    javascript, typescript, react, css, html, node"
+    echo "  web-dev           Web development stack (~55 MB)"
+    echo "                    javascript, typescript, react, css, html, node, php, phpunit, mariadb"
     echo ""
     echo "  data-science      Data science & ML (~75 MB)"
     echo "                    python, numpy, pandas, scikit"
@@ -78,7 +83,7 @@ get_bundle_keys() {
             echo "devdocs-python devdocs-javascript devdocs-typescript devdocs-node devdocs-git devdocs-docker devdocs-bash"
             ;;
         web-dev)
-            echo "devdocs-javascript devdocs-typescript devdocs-react devdocs-css devdocs-html devdocs-node"
+            echo "devdocs-javascript devdocs-typescript devdocs-react devdocs-css devdocs-html devdocs-node devdocs-php devdocs-phpunit devdocs-mariadb"
             ;;
         data-science)
             echo "devdocs-python devdocs-numpy devdocs-pandas devdocs-scikit"

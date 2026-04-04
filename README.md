@@ -47,7 +47,7 @@ You need at least one LLM model. Pick one based on your GPU memory:
 |---|---|---|
 | `qwen2.5:3b` | ~3 GB | Quick responses, low-end hardware |
 | `qwen2.5-coder:7b` | ~6 GB | Coding with larger context |
-| `qwen2.5-coder:14b` | ~12 GB | Best coding quality |
+| `qwen2.5-coder:7b` | ~12 GB | Best coding quality |
 
 Pull it through the CLI:
 
@@ -125,12 +125,14 @@ Claude Code sends requests using Anthropic model names. LiteLLM maps these to yo
 model_list:
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/qwen2.5-coder:14b
-      api_base: http://krull-webui:8080
+      model: openai/qwen2.5-coder:7b
+      api_base: http://krull-webui:8080    # Docker internal URL (not localhost)
       api_key: "none"
 ```
 
 Map as many Claude model names as you want. The `openai/` prefix tells LiteLLM to use the OpenAI-compatible API format that Open WebUI provides.
+
+> **Note:** `api_base` uses `http://krull-webui:8080` — this is Docker's internal hostname, not a URL you open in your browser. Containers talk to each other by name inside Docker's network. From your browser, Open WebUI is at http://localhost:3000.
 
 ### What works with local models
 
@@ -226,7 +228,7 @@ Without a GPU, Ollama falls back to CPU — it works but is significantly slower
 
 **Services won't start:** Run `./scripts/start.sh` — it checks all dependencies and tells you what's missing.
 
-**Model not responding:** Make sure you've pulled at least one model: `docker exec krull-ollama ollama pull qwen2.5-coder:14b`
+**Model not responding:** Make sure you've pulled at least one model: `docker exec krull-ollama ollama pull qwen2.5-coder:7b`
 
 **Claude Code can't connect:** Verify LiteLLM is running (`docker logs krull-litellm`) and that your model name in `litellm/config.yaml` matches what Claude Code sends.
 
