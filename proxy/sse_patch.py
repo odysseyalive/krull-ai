@@ -37,6 +37,10 @@ NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "131072"))
 
 STRIP_HEADERS = {"content-length", "content-encoding", "transfer-encoding", "connection"}
 
+# Cache tool call arguments by call_id so we can patch empty args in follow-up requests.
+# LiteLLM sometimes strips arguments when converting Responses API round-trips.
+_tool_call_cache = {}  # call_id → arguments (JSON string)
+
 
 # ── Tool filtering & guidance ─────────────────────────────────────────────
 
@@ -460,9 +464,15 @@ def responses_input_to_messages(input_items):
                 messages.append({"role": role, "content": content})
         elif item_type == "function_call":
             # Assistant's prior tool call — add as assistant message with tool_calls
+            call_id = item.get("call_id", item.get("id", ""))
             args = item.get("arguments", "{}")
             if isinstance(args, dict):
                 args = json.dumps(args)
+            # Restore cached arguments if LiteLLM stripped them
+            if args in ("{}", "", "null") and call_id in _tool_call_cache:
+                args = _tool_call_cache[call_id]
+                print(f"[PROXY] Restored cached args for {call_id}: {args[:100]}",
+                      file=sys.stderr, flush=True)
             # Check if we can merge with the previous assistant message
             if messages and messages[-1].get("role") == "assistant" and "tool_calls" in messages[-1]:
                 messages[-1]["tool_calls"].append({
@@ -708,6 +718,8 @@ class StreamAdapter:
             self._emit("response.output_item.added", {
                 "type": "response.output_item.added", "output_index": self.output_index, "item": initial_item,
             })
+            # Cache arguments so we can restore them if LiteLLM strips them later
+            _tool_call_cache[tc["id"]] = tc["arguments"]
             # Emit the arguments as a delta + done (LiteLLM reads args from these events)
             self._emit("response.function_call_arguments.delta", {
                 "type": "response.function_call_arguments.delta",
@@ -856,6 +868,7 @@ async def proxy(request: Request, path: str):
             adapter.start()
 
             async def stream_responses():
+                tc_counter = 0  # Running tool call index across chunks
                 try:
                     for et, ed in adapter.drain():
                         yield f"event: {et}\ndata: {json.dumps(ed)}\n\n"
@@ -871,7 +884,6 @@ async def proxy(request: Request, path: str):
                                 continue
                             try:
                                 ollama_chunk = json.loads(line)
-                                # Convert Ollama streaming chunk to Chat Completions format
                                 msg = ollama_chunk.get("message", {})
                                 done = ollama_chunk.get("done", False)
                                 chat_chunk = {
@@ -887,19 +899,22 @@ async def proxy(request: Request, path: str):
                                     chat_chunk["choices"][0]["delta"]["role"] = msg["role"]
                                 if msg.get("tool_calls"):
                                     tc_deltas = []
-                                    for i, tc in enumerate(msg["tool_calls"]):
+                                    for tc in msg["tool_calls"]:
                                         func = tc.get("function", {})
                                         args = func.get("arguments", {})
                                         if isinstance(args, dict):
                                             args = json.dumps(args)
                                         tool_name = func.get("name", "")
                                         args = fix_tool_call_params(tool_name, args)
+                                        call_id = f"call_{uuid.uuid4().hex[:8]}"
+                                        _tool_call_cache[call_id] = args
                                         tc_deltas.append({
-                                            "index": i,
-                                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                                            "index": tc_counter,
+                                            "id": call_id,
                                             "type": "function",
                                             "function": {"name": tool_name, "arguments": args},
                                         })
+                                        tc_counter += 1
                                     chat_chunk["choices"][0]["delta"]["tool_calls"] = tc_deltas
                                     print(f"[PROXY] Tool call: {json.dumps(tc_deltas)[:500]}", file=sys.stderr, flush=True)
                                 if done:
