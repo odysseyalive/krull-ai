@@ -155,6 +155,13 @@ print(d.get(field, False))
 }
 
 install_function \
+    "truth_guard" \
+    "Truth Guard" \
+    "Injects honesty rules: no fabrication, ask when unsure, flag uncertainty, push back when wrong" \
+    "$FUNCTIONS_DIR/truth_guard.py" \
+    "filter"
+
+install_function \
     "current_date" \
     "Current Date & Time" \
     "Injects today's date and current time into every request" \
@@ -242,6 +249,7 @@ echo "============================================"
 echo "  Setup complete!"
 echo ""
 echo "  Installed filters:"
+echo "    - Truth Guard (honesty rules)"
 echo "    - Current Date & Time"
 echo "    - Context Manager (auto-compaction)"
 echo "    - Auto Web Search (SearXNG)"

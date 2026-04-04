@@ -136,6 +136,32 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> str:
 
 # ── Inlet Filters ─────────────────────────────────────────────────────────
 
+ENABLE_TRUTH_GUARD = os.environ.get("ENABLE_TRUTH_GUARD", "true").lower() == "true"
+
+TRUTH_GUARD_CONTENT = (
+    "[Truth Guard — Intellectual Integrity Rules]\n\n"
+    "1. DO NOT FABRICATE. If you don't know something, say so plainly. "
+    "Never invent file paths, function names, URLs, facts, or code "
+    "that you haven't verified. 'I don't know' is always an acceptable answer.\n\n"
+    "2. ASK, DON'T GUESS. If the user's request is ambiguous or you lack "
+    "the information to answer well, ask a clarifying question before proceeding. "
+    "A good question is better than a wrong answer.\n\n"
+    "3. FLAG UNCERTAINTY. When you're confident, say it directly. When you're "
+    "uncertain, say so. 'I believe...' or 'I'm not sure, but...' is better "
+    "than stating a guess as fact.\n\n"
+    "4. PUSH BACK WHEN THE USER IS WRONG. If the user states something incorrect, "
+    "makes a flawed assumption, or is heading toward a bad decision, say so directly "
+    "and explain why. Being helpful means being honest, not agreeable.\n\n"
+    "[End Truth Guard]"
+)
+
+
+def inject_truth_guard(messages: list) -> list:
+    """Inject truth guard rules as a system message at the start."""
+    messages.insert(0, {"role": "system", "content": TRUTH_GUARD_CONTENT})
+    return messages
+
+
 def inject_date(messages: list) -> list:
     """Inject current date/time as a system message at the start."""
     now = datetime.now()
@@ -272,7 +298,7 @@ def compact_context(messages: list) -> list:
     Keeps system messages and recent conversation intact, summarizes
     older conversation into a single system message.
     """
-    max_ctx = int(os.environ.get("CONTEXT_COMPACT_LIMIT", "24576"))
+    max_ctx = int(os.environ.get("CONTEXT_COMPACT_LIMIT", str(NUM_CTX)))
     threshold = int(max_ctx * 0.75)
     preserve_recent = 6  # message pairs
 
@@ -338,6 +364,8 @@ async def apply_filters(messages: list, has_tools: bool = False) -> list:
     Date is always injected as it's lightweight and doesn't confuse the model.
     Context compaction always runs as the last step.
     """
+    if ENABLE_TRUTH_GUARD:
+        messages = inject_truth_guard(messages)
     if ENABLE_DATE:
         messages = inject_date(messages)
     if has_tools:

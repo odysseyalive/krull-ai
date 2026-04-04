@@ -15,7 +15,7 @@ class Filter:
             default=0, description="Filter priority (runs first)"
         )
         max_context_tokens: int = Field(
-            default=16384,
+            default=131072,
             description="Maximum context window size in tokens",
         )
         compact_threshold: float = Field(
