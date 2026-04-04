@@ -244,6 +244,25 @@ else
     echo "    Then update api_key values in litellm/config.yaml"
 fi
 
+# --- Install krull-claude to ~/.local/bin ---
+echo ""
+echo "Installing krull-claude CLI..."
+
+LOCAL_BIN="$HOME/.local/bin"
+if [ -d "$LOCAL_BIN" ]; then
+    cp "$SCRIPT_DIR/krull-claude" "$LOCAL_BIN/krull-claude"
+    chmod +x "$LOCAL_BIN/krull-claude"
+    echo "[+] Installed krull-claude to $LOCAL_BIN/krull-claude"
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$LOCAL_BIN"; then
+        echo "    Note: $LOCAL_BIN is not in your PATH. Add it to your shell profile."
+    fi
+else
+    echo "[!] $LOCAL_BIN does not exist. To install manually:"
+    echo "    mkdir -p $LOCAL_BIN"
+    echo "    cp scripts/krull-claude $LOCAL_BIN/krull-claude"
+    echo "    chmod +x $LOCAL_BIN/krull-claude"
+fi
+
 echo ""
 echo "============================================"
 echo "  Setup complete!"
@@ -268,4 +287,8 @@ echo "    - Max context: 16384 tokens"
 echo "    - Compacts at 75% usage"
 echo "    - Preserves last 6 message pairs"
 echo "    - Adjust per model in the admin panel"
+echo ""
+echo "  Claude Code integration:"
+echo "    Run 'krull-claude' to launch Claude Code"
+echo "    connected to your local stack."
 echo "============================================"

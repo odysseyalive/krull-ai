@@ -33,7 +33,7 @@ The start script checks for all of these and tells you exactly what to install f
 ```bash
 git clone git@github.com:odysseyalive/krull-ai.git
 cd krull-ai
-./scripts/start.sh
+./krull start
 ```
 
 First run pulls Docker images (~10 GB), downloads a small Wikipedia starter (~5 MB), and starts everything. It takes a few minutes, then you're up.
@@ -49,7 +49,7 @@ You need at least one LLM. Pick based on your GPU memory:
 | `frob/qwen3.5-instruct:27b` | ~16 GB | Best quality (needs beefy GPU) |
 
 ```bash
-./scripts/pull-model.sh frob/qwen3.5-instruct:9b
+./krull pull-model frob/qwen3.5-instruct:9b
 ```
 
 This pulls the model and applies tuned parameters (temperature 0.7, top_p 0.8) that work well with system prompts and thinking mode. The defaults ship at temperature 1.0, which is too hot for persona-driven use.
@@ -59,17 +59,17 @@ This pulls the model and applies tuned parameters (temperature 0.7, top_p 0.8) t
 You can pull multiple models at once, or override parameters:
 
 ```bash
-./scripts/pull-model.sh frob/qwen3.5-instruct:9b frob/qwen3.5-instruct:27b        # Pull multiple
-TEMPERATURE=0.6 ./scripts/pull-model.sh frob/qwen3.5-instruct:9b     # Override temp for coding
+./krull pull-model frob/qwen3.5-instruct:9b frob/qwen3.5-instruct:27b        # Pull multiple
+TEMPERATURE=0.6 ./krull pull-model frob/qwen3.5-instruct:9b     # Override temp for coding
 ```
 
 ### 3. Provision the filters
 
 ```bash
-./scripts/setup.sh
+./krull setup
 ```
 
-This installs a set of intelligent filters into Open WebUI that compensate for what local models lack compared to cloud models. Context management, automatic web search, offline knowledge injection, plan mode guardrails, and more. Run once after first install.
+This installs a set of intelligent filters into Open WebUI that compensate for what local models lack compared to cloud models. Context management, automatic web search, offline knowledge injection, plan mode guardrails, and more. It also installs the `krull-claude` command to `~/.local/bin/`. Run once after first install.
 
 ### 4. Start chatting
 
@@ -82,31 +82,31 @@ The thing is, the real power here shows up when the internet isn't available. St
 **Wikipedia:**
 
 ```bash
-./scripts/download-wikipedia.sh medicine    # Medical articles (~2 GB)
-./scripts/download-wikipedia.sh nopic       # All articles, no images (~25 GB)
-./scripts/download-wikipedia.sh full        # Everything with images (~115 GB)
+./krull download-wikipedia medicine    # Medical articles (~2 GB)
+./krull download-wikipedia nopic       # All articles, no images (~25 GB)
+./krull download-wikipedia full        # Everything with images (~115 GB)
 docker restart krull-kiwix
 ```
 
 **Developer docs, Stack Exchange, and more:**
 
 ```bash
-./scripts/download-knowledge.sh dev-essentials    # Python, JS, TS, Node, Git, Docker, Bash (~50 MB)
-./scripts/download-knowledge.sh web-dev            # Full web stack including PHP, MariaDB (~55 MB)
-./scripts/download-knowledge.sh data-science       # Python, NumPy, Pandas, Scikit-learn (~75 MB)
-./scripts/download-knowledge.sh sysadmin           # Arch Wiki, Unix & Server Q&A (~5.5 GB)
-./scripts/download-knowledge.sh community          # Code Review, Security, SoftEng Q&A (~5 GB)
+./krull download-knowledge dev-essentials    # Python, JS, TS, Node, Git, Docker, Bash (~50 MB)
+./krull download-knowledge web-dev            # Full web stack including PHP, MariaDB (~55 MB)
+./krull download-knowledge data-science       # Python, NumPy, Pandas, Scikit-learn (~75 MB)
+./krull download-knowledge sysadmin           # Arch Wiki, Unix & Server Q&A (~5.5 GB)
+./krull download-knowledge community          # Code Review, Security, SoftEng Q&A (~5 GB)
 docker restart krull-kiwix
 ```
 
-Run `./scripts/download-knowledge.sh` with no arguments to see the full catalog.
+Run `./krull download-knowledge` with no arguments to see the full catalog.
 
 **Offline maps:**
 
 ```bash
-./scripts/download-maps.sh oregon      # ~100 MB (extracted via HTTP range requests)
-./scripts/download-maps.sh us-west     # ~800 MB
-./scripts/download-maps.sh us          # ~3 GB
+./krull download-maps oregon      # ~100 MB (extracted via HTTP range requests)
+./krull download-maps us-west     # ~800 MB
+./krull download-maps us          # ~3 GB
 docker restart krull-tileserver
 ```
 
@@ -119,12 +119,23 @@ This got me thinking. What if you could keep coding with Claude Code even when t
 ### Connect Claude Code to your local stack
 
 ```bash
+krull-claude
+```
+
+The `krull-claude` command is installed to `~/.local/bin/` when you run `./krull setup`. It launches Claude Code pre-configured to talk to your local stack. Requires `~/.local/bin` to be in your `$PATH`. All arguments are passed through to `claude`, so `krull-claude -p "hello"` works as expected.
+
+<details>
+<summary>Manual alternative (without krull-claude)</summary>
+
+```bash
 ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
 ANTHROPIC_BASE_URL=http://localhost:4000 \
 DISABLE_TELEMETRY=1 \
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
 claude
 ```
+
+</details>
 
 > **Note:** `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) skips Claude Code's login screen. The telemetry flags prevent Claude Code from hitting Ollama's unsupported `/v1/messages/count_tokens` endpoint, which causes cascading failures.
 
@@ -211,16 +222,20 @@ Settings you might want to tune:
 
 ## Scripts
 
-| Script | What it does |
+All commands are run through the `./krull` wrapper at the project root:
+
+| Command | What it does |
 |---|---|
-| `scripts/start.sh` | Checks dependencies (with OS-specific install hints), pulls images, starts everything |
-| `scripts/pull-model.sh` | Pulls Ollama models with tuned parameters (temp 0.7, top_p 0.8) |
-| `scripts/setup.sh` | Installs filters into Open WebUI, enables them globally. Run once after first install. |
-| `scripts/stop.sh` | Stops all services. Your data stays. |
-| `scripts/update.sh` | Pulls latest images and recreates containers. Your data stays. |
-| `scripts/download-wikipedia.sh` | Downloads Wikipedia ZIM files for Kiwix |
-| `scripts/download-knowledge.sh` | Downloads dev docs, Stack Exchange, Arch Wiki, and more |
-| `scripts/download-maps.sh` | Downloads OpenStreetMap tiles (PMTiles via Protomaps) for offline maps |
+| `./krull start` | Checks dependencies (with OS-specific install hints), pulls images, starts everything |
+| `./krull stop` | Stops all services. Your data stays. |
+| `./krull setup` | Installs filters into Open WebUI, installs `krull-claude`. Run once after first install. |
+| `./krull update` | Pulls latest images and recreates containers. Your data stays. |
+| `./krull pull-model` | Pulls Ollama models with tuned parameters (temp 0.7, top_p 0.8) |
+| `./krull download-wikipedia` | Downloads Wikipedia ZIM files for Kiwix |
+| `./krull download-knowledge` | Downloads dev docs, Stack Exchange, Arch Wiki, and more |
+| `./krull download-maps` | Downloads OpenStreetMap tiles (PMTiles via Protomaps) for offline maps |
+
+Individual scripts in `scripts/` still work directly if needed.
 
 ## Data and Persistence
 
@@ -246,7 +261,7 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 ## Troubleshooting
 
-**Services won't start:** Run `./scripts/start.sh`. It checks everything and tells you what's missing.
+**Services won't start:** Run `./krull start`. It checks everything and tells you what's missing.
 
 **Model not responding:** Pull at least one model first: `docker exec krull-ollama ollama pull frob/qwen3.5-instruct:9b`
 
@@ -254,8 +269,8 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 **"No connected db" error:** Make sure `litellm/config.yaml` has `general_settings.allow_requests_on_db_unavailable: true`. This is required because LiteLLM runs without a database in this stack.
 
-**Filters not working:** Run `./scripts/setup.sh` again. Check **Admin Panel > Functions** in Open WebUI to verify they're listed and enabled.
+**Filters not working:** Run `./krull setup` again. Check **Admin Panel > Functions** in Open WebUI to verify they're listed and enabled.
 
 **Out of GPU memory:** Try a smaller model (`frob/qwen3.5-instruct:4b`) or a quantized variant like `frob/qwen3.5-instruct:9b-q4_K_M`.
 
-**Starting fresh:** `docker compose down` stops everything. Data in `data/` is preserved. To truly wipe: delete the `data/` directory and run `start.sh` again.
+**Starting fresh:** `docker compose down` stops everything. Data in `data/` is preserved. To truly wipe: delete the `data/` directory and run `./krull start` again.

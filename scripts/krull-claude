@@ -1,0 +1,6 @@
+#!/bin/bash
+ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
+ANTHROPIC_BASE_URL=http://localhost:4000 \
+DISABLE_TELEMETRY=1 \
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+exec claude "$@"
