@@ -159,7 +159,7 @@ echo "Waiting for services to be ready..."
 sleep 5
 
 # Check each service
-for svc in krull-ollama krull-webui krull-searxng krull-litellm krull-kiwix; do
+for svc in krull-ollama krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix; do
     STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
     if [ "$STATUS" = "running" ]; then
         echo "[+] $svc: running"
@@ -174,5 +174,6 @@ echo "  Krull AI is running!"
 echo ""
 echo "  Open WebUI:  http://localhost:3000"
 echo "  LiteLLM:     http://localhost:4000"
+echo "  Maps:        http://localhost:8070"
 echo "  Kiwix:       http://localhost:8090"
 echo "============================================"

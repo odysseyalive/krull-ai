@@ -70,13 +70,22 @@ class Filter:
                 title = r.get("title", "")
                 url = r.get("url", "")
                 snippet = r.get("content", "")
-                context_lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
-            context_lines.append("[End Web Search Results]\n")
+                context_lines.append(f"{i}. {title}\n   URL: {url}\n   {snippet}")
+            context_lines.append("[End Web Search Results]")
+            context_lines.append("")
+            context_lines.append(
+                "IMPORTANT: When using information from the search results above, "
+                "you MUST cite your sources. Reference them inline (e.g., "
+                "\"according to [Title](URL)...\") and include a References "
+                "section at the end of your response with the titles and URLs "
+                "of all sources you used."
+            )
+            context_lines.append("")
 
             search_context = "\n".join(context_lines)
 
             messages[-1]["content"] = (
-                f"{search_context}\n\nUser question: {query}"
+                f"{search_context}\nUser question: {query}"
             )
 
         except Exception:

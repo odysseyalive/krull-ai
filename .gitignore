@@ -3,6 +3,10 @@ data/ollama/*
 data/webui/*
 !data/ollama/.gitkeep
 !data/webui/.gitkeep
+data/mbtiles/*
+data/photon/*
+!data/mbtiles/.gitkeep
+!data/photon/.gitkeep
 
 # ZIM files (large offline knowledge archives)
 zim/*.zim

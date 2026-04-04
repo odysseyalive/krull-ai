@@ -66,6 +66,36 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-dev-key}
 
+  tileserver:
+    image: maptiler/tileserver-gl-light:latest
+    container_name: krull-tileserver
+    restart: unless-stopped
+    ports:
+      - "8070:8080"
+    volumes:
+      - ./data/mbtiles:/data:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if ls /data/*.mbtiles 1>/dev/null 2>&1; then
+          exec node /usr/src/app/ -p 8080
+        else
+          echo "No .mbtiles files found in /data/. Waiting for files..."
+          while ! ls /data/*.mbtiles 1>/dev/null 2>&1; do sleep 30; done
+          exec node /usr/src/app/ -p 8080
+        fi
+
+  photon:
+    image: rtuszik/photon-docker:latest
+    container_name: krull-photon
+    restart: unless-stopped
+    ports:
+      - "2322:2322"
+    volumes:
+      - ./data/photon:/photon/photon_data
+    environment:
+      - COUNTRY_CODE=us
+
   kiwix:
     image: ghcr.io/kiwix/kiwix-serve:latest
     container_name: krull-kiwix

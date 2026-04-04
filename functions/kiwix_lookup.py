@@ -101,16 +101,29 @@ class Filter:
                         except Exception:
                             pass
 
+                    kiwix_public_url = "http://localhost:8090"
+                    full_url = f"{kiwix_public_url}{path}" if path else ""
                     context_lines.append(f"{i}. {title}")
+                    if full_url:
+                        context_lines.append(f"   Source: {full_url}")
                     if snippet:
                         context_lines.append(f"   {snippet}")
 
-            context_lines.append("[End Offline Knowledge Base]\n")
+            context_lines.append("[End Offline Knowledge Base]")
+            context_lines.append("")
+            context_lines.append(
+                "IMPORTANT: When using information from the offline knowledge "
+                "base above, you MUST cite your sources. Reference them inline "
+                "(e.g., \"according to [Article Title](URL)...\") and include "
+                "a References section at the end of your response with the "
+                "titles and URLs of all sources you used."
+            )
+            context_lines.append("")
 
             if len(context_lines) > 2:
                 knowledge_context = "\n".join(context_lines)
                 messages[-1]["content"] = (
-                    f"{knowledge_context}\n\n{messages[-1]['content']}"
+                    f"{knowledge_context}\n{messages[-1]['content']}"
                 )
 
         except Exception:

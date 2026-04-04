@@ -155,6 +155,13 @@ print(d.get(field, False))
 }
 
 install_function \
+    "current_date" \
+    "Current Date & Time" \
+    "Injects today's date and current time into every request" \
+    "$FUNCTIONS_DIR/current_date.py" \
+    "filter"
+
+install_function \
     "context_manager" \
     "Context Manager" \
     "Automatically compacts conversation history when approaching context limits" \
@@ -196,17 +203,26 @@ install_function \
     "$FUNCTIONS_DIR/skill_adapter.py" \
     "filter"
 
+install_function \
+    "map_search" \
+    "Offline Map Search" \
+    "Searches Photon geocoding for location queries and injects results with coordinates" \
+    "$FUNCTIONS_DIR/map_search.py" \
+    "filter"
+
 echo ""
 echo "============================================"
 echo "  Setup complete!"
 echo ""
 echo "  Installed filters:"
+echo "    - Current Date & Time"
 echo "    - Context Manager (auto-compaction)"
 echo "    - Auto Web Search (SearXNG)"
 echo "    - Kiwix Knowledge Lookup"
 echo "    - Plan Mode Assistant (local model support)"
 echo "    - Plan Execution Tracker (implementation guidance)"
 echo "    - Skill Adapter (local model skill support)"
+echo "    - Offline Map Search (Photon geocoding)"
 echo ""
 echo "  All filters are enabled globally."
 echo "  Adjust settings in Open WebUI:"
