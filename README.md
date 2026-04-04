@@ -184,13 +184,16 @@ model_list:
                            ┌──────────────────────────────────────────┐
                            │              Open WebUI                  │
   Browser ────────────────►│  (filters, pipelines, RAG, web search)  │──► Ollama ──► GPU
-                           └──────────────────────────────────────────┘
-                                            ▲
-  Claude Code ──► LiteLLM (port 4000) ──────┘
-                  (translates API format)
+                           └──────────────────────────────────────────┘        ▲
+                                                                               │
+                           ┌──────────────────────────────────────────┐        │
+                           │            SSE Proxy (port 4001)         │────────┘
+  Claude Code ──► LiteLLM ►│  (web search, kiwix, date injection,    │◄── SearXNG
+                 (port 4000)│   context compaction, SSE streaming)    │◄── Kiwix
+                            └──────────────────────────────────────────┘
 ```
 
-Two paths to the same brain. The browser talks to Open WebUI directly. Claude Code goes through LiteLLM, which translates the Anthropic API format into something Open WebUI understands. Both paths run through the same filter pipeline. Configure a tool once, it works everywhere.
+Two paths to the same brain. The browser talks to Open WebUI directly, where Python filters handle context enrichment. Claude Code goes through LiteLLM, which translates the Anthropic API format and routes to the SSE proxy. The proxy injects the same capabilities — web search, offline knowledge, date/time, context compaction — then streams the response back as Anthropic-compatible SSE events.
 
 ## Filters
 
