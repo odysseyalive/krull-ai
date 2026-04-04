@@ -4,61 +4,95 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 FUNCTIONS_DIR="$PROJECT_DIR/functions"
-WEBUI_URL="http://localhost:3000"
+
+# API calls go through the container directly to avoid SPA routing issues
+WEBUI_CONTAINER="krull-webui"
+WEBUI_INTERNAL="http://localhost:8080"
 
 echo "Krull AI — Setup"
 echo ""
 
-# --- Wait for Open WebUI to be ready ---
+# --- Check container is running ---
+if ! docker inspect --format='{{.State.Status}}' "$WEBUI_CONTAINER" 2>/dev/null | grep -q "running"; then
+    echo "ERROR: $WEBUI_CONTAINER is not running."
+    echo "       Start services first: ./scripts/start.sh"
+    exit 1
+fi
+
+# --- Wait for Open WebUI API to be ready ---
 echo "Waiting for Open WebUI to be ready..."
 MAX_WAIT=60
 WAITED=0
-while ! curl -s -o /dev/null -w "%{http_code}" "$WEBUI_URL/api/config" | grep -q "200"; do
+while ! docker exec "$WEBUI_CONTAINER" curl -s -o /dev/null -w "%{http_code}" "$WEBUI_INTERNAL/api/config" 2>/dev/null | grep -q "200"; do
     sleep 2
     WAITED=$((WAITED + 2))
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
         echo "ERROR: Open WebUI did not become ready within ${MAX_WAIT}s."
-        echo "       Make sure services are running: ./scripts/start.sh"
         exit 1
     fi
 done
 echo "[+] Open WebUI is ready"
 echo ""
 
-# --- Create admin account and get token ---
-# With WEBUI_AUTH=False, we still need a token for API calls.
-# Try to sign up a provisioning account, or sign in if it already exists.
-ADMIN_EMAIL="admin@krull.local"
+# --- Authenticate ---
+# Open WebUI auto-creates a default admin on first launch.
+# Try common default credentials, then try creating an account.
 ADMIN_PASSWORD="krull-admin-setup"
-ADMIN_NAME="Krull Admin"
 
 echo "Setting up admin account for provisioning..."
 
-# Try signup first
-SIGNUP_RESP=$(curl -s -X POST "$WEBUI_URL/api/v1/auths/signup" \
-    -H "Content-Type: application/json" \
-    -d "{\"email\": \"$ADMIN_EMAIL\", \"password\": \"$ADMIN_PASSWORD\", \"name\": \"$ADMIN_NAME\"}" 2>/dev/null || echo "{}")
-
-TOKEN=$(echo "$SIGNUP_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
-
-# If signup failed (account exists), try signin
-if [ -z "$TOKEN" ]; then
-    SIGNIN_RESP=$(curl -s -X POST "$WEBUI_URL/api/v1/auths/signin" \
+# Try signing in with default account (created by Open WebUI on first start)
+TOKEN=""
+for EMAIL in "admin@localhost" "admin@krull.local"; do
+    RESP=$(docker exec "$WEBUI_CONTAINER" curl -s -X POST "$WEBUI_INTERNAL/api/v1/auths/signin" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$ADMIN_EMAIL\", \"password\": \"$ADMIN_PASSWORD\"}" 2>/dev/null || echo "{}")
+        -d "{\"email\": \"$EMAIL\", \"password\": \"$ADMIN_PASSWORD\"}" 2>/dev/null || echo "{}")
 
-    TOKEN=$(echo "$SIGNIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    if [ -n "$TOKEN" ]; then
+        break
+    fi
+done
+
+# If no existing account works, try creating one
+if [ -z "$TOKEN" ]; then
+    RESP=$(docker exec "$WEBUI_CONTAINER" curl -s -X POST "$WEBUI_INTERNAL/api/v1/auths/signup" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\": \"admin@krull.local\", \"password\": \"$ADMIN_PASSWORD\", \"name\": \"Krull Admin\"}" 2>/dev/null || echo "{}")
+
+    TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
 fi
 
 if [ -z "$TOKEN" ]; then
     echo "ERROR: Could not authenticate with Open WebUI."
-    echo "       If you've set up a different admin account, update the"
-    echo "       credentials in this script or provision functions manually."
+    echo "       If you've set up a different admin account, sign in at"
+    echo "       http://localhost:3000 and install the functions from"
+    echo "       Admin Panel > Functions manually."
     exit 1
 fi
 
 echo "[+] Authenticated"
 echo ""
+
+# --- Helper: run API calls inside the container ---
+webui_api() {
+    local method="$1"
+    local path="$2"
+    local data="$3"
+
+    if [ -n "$data" ]; then
+        docker exec "$WEBUI_CONTAINER" curl -s -X "$method" \
+            "$WEBUI_INTERNAL$path" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$data" 2>/dev/null
+    else
+        docker exec "$WEBUI_CONTAINER" curl -s -X "$method" \
+            "$WEBUI_INTERNAL$path" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" 2>/dev/null
+    fi
+}
 
 # --- Install Functions ---
 install_function() {
@@ -70,51 +104,54 @@ install_function() {
 
     echo "Installing function: $name"
 
-    # Read the Python code
+    # Read the Python code and JSON-encode it
     CODE=$(python3 -c "
-import json, sys
+import json
 with open('$file') as f:
     print(json.dumps(f.read()))
 ")
 
-    # Check if function already exists
-    EXISTS=$(curl -s -o /dev/null -w "%{http_code}" \
-        "$WEBUI_URL/api/v1/functions/id/$id" \
-        -H "Authorization: Bearer $TOKEN")
+    PAYLOAD="{
+        \"id\": \"$id\",
+        \"name\": \"$name\",
+        \"description\": \"$description\",
+        \"content\": $CODE,
+        \"type\": \"$func_type\",
+        \"meta\": {}
+    }"
 
-    if [ "$EXISTS" = "200" ]; then
-        # Update existing function
-        RESP=$(curl -s -X POST "$WEBUI_URL/api/v1/functions/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"id\": \"$id\",
-                \"name\": \"$name\",
-                \"description\": \"$description\",
-                \"content\": $CODE,
-                \"type\": \"$func_type\"
-            }")
+    # Check if function already exists
+    EXISTS_RESP=$(webui_api GET "/api/v1/functions/id/$id")
+    HAS_ID=$(echo "$EXISTS_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+    if [ "$HAS_ID" = "$id" ]; then
+        webui_api POST "/api/v1/functions/id/$id/update" "$PAYLOAD" > /dev/null
         echo "  [+] Updated"
     else
-        # Create new function
-        RESP=$(curl -s -X POST "$WEBUI_URL/api/v1/functions/create" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"id\": \"$id\",
-                \"name\": \"$name\",
-                \"description\": \"$description\",
-                \"content\": $CODE,
-                \"type\": \"$func_type\"
-            }")
-        echo "  [+] Created"
+        RESP=$(webui_api POST "/api/v1/functions/create" "$PAYLOAD")
+        CREATED_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+        if [ "$CREATED_ID" = "$id" ]; then
+            echo "  [+] Created"
+        else
+            echo "  [-] FAILED: $(echo "$RESP" | head -c 200)"
+            return 1
+        fi
     fi
 
-    # Toggle as global filter
-    curl -s -X POST "$WEBUI_URL/api/v1/functions/id/$id/toggle/global" \
-        -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1
+    # Enable globally and activate — toggles flip state, so check after each
+    for toggle in "toggle/global" "toggle"; do
+        CURRENT=$(webui_api GET "/api/v1/functions/id/$id" | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+field = 'is_global' if 'global' in '$toggle' else 'is_active'
+print(d.get(field, False))
+" 2>/dev/null || echo "")
+        if [ "$CURRENT" != "True" ]; then
+            webui_api POST "/api/v1/functions/id/$id/$toggle" > /dev/null
+        fi
+    done
 
-    echo "  [+] Enabled globally"
+    echo "  [+] Enabled globally + activated"
 }
 
 install_function \
