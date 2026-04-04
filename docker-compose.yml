@@ -31,6 +31,7 @@ services:
       - OLLAMA_BASE_URL=http://krull-ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-generate-a-real-key}
       - WEBUI_AUTH=False
+      - ENABLE_API_KEYS=True
       # Web search via SearXNG
       - ENABLE_RAG_WEB_SEARCH=True
       - RAG_WEB_SEARCH_ENGINE=searxng

@@ -110,6 +110,9 @@ This got me thinking. What if you could keep coding with Claude Code even when t
 ### Connect Claude Code to your local stack
 
 ```bash
+# If you're logged into claude.ai, log out first
+claude /logout
+
 # ANTHROPIC_API_KEY must match LITELLM_MASTER_KEY in docker-compose.yml
 export ANTHROPIC_BASE_URL=http://localhost:4000
 export ANTHROPIC_API_KEY=sk-local-dev-key

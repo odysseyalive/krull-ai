@@ -210,6 +210,33 @@ install_function \
     "$FUNCTIONS_DIR/map_search.py" \
     "filter"
 
+# --- Generate API key for LiteLLM → Open WebUI connection ---
+echo ""
+echo "Configuring LiteLLM → Open WebUI API key..."
+
+API_KEY=$(webui_api POST "/api/v1/auths/api_key" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
+
+if [ -n "$API_KEY" ]; then
+    # Update litellm config with the real API key
+    python3 << PYEOF
+import re
+with open('$PROJECT_DIR/litellm/config.yaml') as f:
+    content = f.read()
+content = re.sub(r'api_key:\s*"[^"]*"', 'api_key: "$API_KEY"', content)
+content = re.sub(r'api_base:\s*http://krull-webui:8080(?!/api)', 'api_base: http://krull-webui:8080/api', content)
+with open('$PROJECT_DIR/litellm/config.yaml', 'w') as f:
+    f.write(content)
+PYEOF
+    echo "[+] LiteLLM config updated with Open WebUI API key"
+    echo "    Restarting LiteLLM..."
+    docker restart krull-litellm > /dev/null 2>&1
+    echo "[+] LiteLLM restarted"
+else
+    echo "[!] Could not generate API key. LiteLLM may need manual configuration."
+    echo "    Generate a key in Open WebUI: Settings > Account > API Keys"
+    echo "    Then update api_key values in litellm/config.yaml"
+fi
+
 echo ""
 echo "============================================"
 echo "  Setup complete!"
