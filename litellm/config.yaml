@@ -5,43 +5,38 @@ litellm_settings:
   drop_params: true
 
 model_list:
-  # Route Claude Code requests to Ollama via ollama_chat/ provider
-  # The ollama_chat/ provider handles Anthropic↔Ollama tool calling translation
-  # This gives proper tool_use blocks with id, name, input fields
-  #
-  # NOTE: api_base uses Docker's internal hostname (krull-ollama:11434), NOT localhost.
-  # Containers talk to each other by name inside Docker's network.
+  # Routes through SSE Proxy which:
+  # 1. Applies inlet filters (date, web search, kiwix) to messages
+  # 2. Translates Responses API → Chat Completions format
+  # 3. Forwards to Ollama with tools preserved
+  # Flow: Claude Code → LiteLLM → SSE Proxy (filters) → Ollama → GPU
 
-  # Sonnet — current and legacy model IDs
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: ollama_chat/frob/qwen3.5-instruct:9b
-      api_base: http://krull-ollama:11434
+      model: openai/frob/qwen3.5-instruct:9b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-proxy-passthrough"
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: ollama_chat/frob/qwen3.5-instruct:9b
-      api_base: http://krull-ollama:11434
+      model: openai/frob/qwen3.5-instruct:9b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-proxy-passthrough"
 
-  # Opus — current and legacy model IDs
   - model_name: claude-opus-4-6
     litellm_params:
-      model: ollama_chat/frob/qwen3.5-instruct:9b
-      api_base: http://krull-ollama:11434
+      model: openai/frob/qwen3.5-instruct:9b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-proxy-passthrough"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
-      model: ollama_chat/frob/qwen3.5-instruct:9b
-      api_base: http://krull-ollama:11434
+      model: openai/frob/qwen3.5-instruct:9b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-proxy-passthrough"
 
-  # Haiku
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: ollama_chat/frob/qwen3.5-instruct:9b
-      api_base: http://krull-ollama:11434
-
-  # Add more model mappings as needed:
-  # - model_name: claude-sonnet-4-6
-  #   litellm_params:
-  #     model: ollama_chat/qwen3.5:27b
-  #     api_base: http://krull-ollama:11434
+      model: openai/frob/qwen3.5-instruct:9b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-proxy-passthrough"

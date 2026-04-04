@@ -28,6 +28,7 @@ services:
     volumes:
       - ./data/webui:/app/backend/data
       - /etc/localtime:/etc/localtime:ro
+      - ${HOME}:${HOME}:ro
     environment:
       - OLLAMA_BASE_URL=http://krull-ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-generate-a-real-key}
@@ -54,11 +55,32 @@ services:
       - SETGID
       - SETUID
 
+  sse-proxy:
+    build: ./proxy
+    container_name: krull-sse-proxy
+    depends_on:
+      - ollama
+      - searxng
+    restart: unless-stopped
+    ports:
+      - "4001:8081"
+    environment:
+      - OLLAMA_URL=http://krull-ollama:11434
+      - SEARXNG_URL=http://krull-searxng:8080
+      - KIWIX_URL=http://krull-kiwix:8080
+      - ENABLE_WEB_SEARCH=true
+      - ENABLE_KIWIX=true
+      - ENABLE_DATE=true
+      - SEARCH_RESULTS=5
+      - OLLAMA_NUM_CTX=131072
+      - CONTEXT_COMPACT_LIMIT=98304
+      - PORT=8081
+
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable
     container_name: krull-litellm
     depends_on:
-      - open-webui
+      - sse-proxy
     restart: unless-stopped
     ports:
       - "4000:4000"
