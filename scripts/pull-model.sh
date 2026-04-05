@@ -4,13 +4,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Default parameters tuned for voice profile + thinking mode
-# Temperature 0.7 (down from default 1.0) prevents over-application of persona cues
+# Source .env for model parameters if available
+ENV_FILE="$PROJECT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a; source "$ENV_FILE"; set +a
+fi
+
+# Defaults tuned for voice profile + persona work
+# Temperature 0.8 gives enough variety for natural cadence without losing coherence
 # top_p 0.8 (down from 0.95) keeps responses grounded
-DEFAULT_TEMPERATURE="0.7"
-DEFAULT_TOP_P="0.8"
-DEFAULT_TOP_K="20"
-DEFAULT_PRESENCE_PENALTY="1.5"
+DEFAULT_TEMPERATURE="${OLLAMA_TEMPERATURE:-0.8}"
+DEFAULT_TOP_P="${OLLAMA_TOP_P:-0.8}"
+DEFAULT_TOP_K="${OLLAMA_TOP_K:-20}"
+DEFAULT_PRESENCE_PENALTY="${OLLAMA_PRESENCE_PENALTY:-1.5}"
 
 usage() {
     echo "Usage: ./scripts/pull-model.sh <model> [model ...]"
@@ -28,8 +34,9 @@ usage() {
     echo "  top_k:            $DEFAULT_TOP_K"
     echo "  presence_penalty: $DEFAULT_PRESENCE_PENALTY"
     echo ""
-    echo "Override with environment variables:"
-    echo "  TEMPERATURE=0.6 ./scripts/pull-model.sh frob/qwen3.5-instruct:9b"
+    echo "Set in .env (persistent) or override per-run:"
+    echo "  .env:    OLLAMA_TEMPERATURE=0.6"
+    echo "  Per-run: TEMPERATURE=0.6 ./scripts/pull-model.sh frob/qwen3.5-instruct:9b"
 }
 
 if [ $# -eq 0 ]; then
