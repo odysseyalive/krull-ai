@@ -4,15 +4,21 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Source .env for COMPOSE_FILE so we update the correct set of services
+ENV_FILE="$PROJECT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a; source "$ENV_FILE"; set +a
+fi
+
 echo "Updating Krull AI..."
 echo ""
 
 echo "Pulling latest images..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" pull
+docker compose --project-directory "$PROJECT_DIR" pull
 
 echo ""
 echo "Recreating containers with new images..."
-docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d --force-recreate
+docker compose --project-directory "$PROJECT_DIR" up -d --force-recreate
 
 echo ""
 echo "Update complete. Data and models are preserved."

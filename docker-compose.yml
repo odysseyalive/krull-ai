@@ -19,8 +19,6 @@ services:
       - "3000:8080"
     volumes:
       - ./data/webui:/app/backend/data
-      - /etc/localtime:/etc/localtime:ro
-      - ${HOME}:${HOME}:ro
     environment:
       - OLLAMA_BASE_URL=http://krull-ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-generate-a-real-key}

@@ -20,6 +20,17 @@ detect_distro() {
 }
 
 DISTRO=$(detect_distro)
+IS_MACOS=false
+[[ "$OSTYPE" == "darwin"* ]] && IS_MACOS=true
+
+# Cross-platform sed -i (GNU vs BSD)
+sedi() {
+    if $IS_MACOS; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
 
 install_hint() {
     local pkg="$1"
@@ -66,9 +77,10 @@ install_hint() {
             case "$pkg" in
                 docker)         echo "  brew install --cask docker  (or install Docker Desktop)" ;;
                 docker-compose) echo "  Docker Compose is included with Docker Desktop" ;;
-                curl)           echo "  brew install curl" ;;
+                curl)           echo "  curl is pre-installed on macOS" ;;
+                ollama)         echo "  brew install ollama" ;;
                 nvidia-container-toolkit)
-                    echo "  NVIDIA GPU passthrough is not supported on macOS." ;;
+                    echo "  Not applicable on macOS. Native Ollama uses Metal for GPU acceleration." ;;
             esac
             ;;
         *)
@@ -151,23 +163,45 @@ set -a
 source "$ENV_FILE"
 set +a
 
-# Check NVIDIA — verify both the container runtime AND that the driver is actually loaded
+# Platform-aware compose file assembly
 COMPOSE_FILES="-f $PROJECT_DIR/docker-compose.yml"
-if docker info 2>/dev/null | grep -qi nvidia && nvidia-smi &>/dev/null; then
-    echo "[+] NVIDIA GPU available (driver loaded)"
-    COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.gpu.yml"
-    # Update COMPOSE_FILE in .env so manual docker compose commands also use GPU
-    sed -i '/^COMPOSE_FILE=/d' "$ENV_FILE"
-    echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> "$ENV_FILE"
+
+if $IS_MACOS; then
+    # macOS: use native Ollama for Metal GPU acceleration (Docker has no GPU passthrough on macOS)
+    COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.macos.yml"
+
+    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        echo "[+] Native Ollama detected (Metal GPU acceleration)"
+    else
+        echo "[!] Ollama is not running on this Mac."
+        install_hint ollama
+        echo "    Start with: ollama serve"
+        echo ""
+        echo "    Continuing anyway — Ollama can be started later."
+    fi
+
+    sedi '/^COMPOSE_FILE=/d' "$ENV_FILE"
+    echo "COMPOSE_FILE=docker-compose.yml:docker-compose.macos.yml" >> "$ENV_FILE"
 else
-    echo "[!] NVIDIA GPU not available — Ollama will use CPU only."
-    # Remove GPU from .env if it was previously set
-    sed -i '/^COMPOSE_FILE=/d' "$ENV_FILE"
-    if ! docker info 2>/dev/null | grep -qi nvidia; then
-        install_hint nvidia-container-toolkit
-    elif ! nvidia-smi &>/dev/null; then
-        echo "    nvidia-container-toolkit is installed but the driver is not loaded."
-        echo "    Check: sudo modprobe nvidia  or reboot after a kernel/driver update."
+    # Linux: add linux-specific mounts
+    COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.linux.yml"
+
+    # Check NVIDIA — verify both the container runtime AND that the driver is actually loaded
+    if docker info 2>/dev/null | grep -qi nvidia && nvidia-smi &>/dev/null; then
+        echo "[+] NVIDIA GPU available (driver loaded)"
+        COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.gpu.yml"
+        sedi '/^COMPOSE_FILE=/d' "$ENV_FILE"
+        echo "COMPOSE_FILE=docker-compose.yml:docker-compose.linux.yml:docker-compose.gpu.yml" >> "$ENV_FILE"
+    else
+        echo "[!] NVIDIA GPU not available — Ollama will use CPU only."
+        sedi '/^COMPOSE_FILE=/d' "$ENV_FILE"
+        echo "COMPOSE_FILE=docker-compose.yml:docker-compose.linux.yml" >> "$ENV_FILE"
+        if ! docker info 2>/dev/null | grep -qi nvidia; then
+            install_hint nvidia-container-toolkit
+        elif ! nvidia-smi &>/dev/null; then
+            echo "    nvidia-container-toolkit is installed but the driver is not loaded."
+            echo "    Check: sudo modprobe nvidia  or reboot after a kernel/driver update."
+        fi
     fi
 fi
 
@@ -247,7 +281,7 @@ fi
 
 # Update LiteLLM config with current model from .env
 echo "[+] Model: $OLLAMA_MODEL (context: $OLLAMA_NUM_CTX)"
-sed -i "s|model: openai/[^ ]*|model: openai/$OLLAMA_MODEL|g" "$PROJECT_DIR/litellm/config.yaml"
+sedi "s|model: openai/[^ ]*|model: openai/$OLLAMA_MODEL|g" "$PROJECT_DIR/litellm/config.yaml"
 
 echo ""
 echo "Starting services..."
@@ -258,17 +292,37 @@ echo "Waiting for services to be ready..."
 sleep 5
 
 # Auto-pull model if not present
-if docker exec krull-ollama ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
-    echo "[+] $OLLAMA_MODEL model found"
+if $IS_MACOS; then
+    if ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+        echo "[+] $OLLAMA_MODEL model found"
+    else
+        echo "[!] $OLLAMA_MODEL not found. Pulling model..."
+        "$SCRIPT_DIR/pull-model.sh" "$OLLAMA_MODEL"
+    fi
 else
-    echo "[!] $OLLAMA_MODEL not found. Pulling model..."
-    "$SCRIPT_DIR/pull-model.sh" "$OLLAMA_MODEL"
+    if docker exec krull-ollama ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+        echo "[+] $OLLAMA_MODEL model found"
+    else
+        echo "[!] $OLLAMA_MODEL not found. Pulling model..."
+        "$SCRIPT_DIR/pull-model.sh" "$OLLAMA_MODEL"
+    fi
 fi
 
 echo ""
 
 # Check each service
-for svc in krull-ollama krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix; do
+if $IS_MACOS; then
+    # Check native Ollama
+    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        echo "[+] ollama (native): running"
+    else
+        echo "[-] ollama (native): not running — start with 'ollama serve'"
+    fi
+    SERVICES="krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix"
+else
+    SERVICES="krull-ollama krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix"
+fi
+for svc in $SERVICES; do
     STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
     if [ "$STATUS" = "running" ]; then
         echo "[+] $svc: running"

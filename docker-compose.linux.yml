@@ -1,0 +1,6 @@
+# Linux-specific overrides (auto-included by start.sh on Linux)
+services:
+  open-webui:
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${HOME}:${HOME}:ro

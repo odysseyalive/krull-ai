@@ -1,0 +1,20 @@
+# macOS overrides (auto-included by start.sh on macOS)
+# Replaces Docker Ollama with a lightweight stub — native Ollama provides
+# Metal GPU acceleration which Docker cannot pass through on macOS.
+services:
+  ollama:
+    image: busybox:latest
+    command: ["sh", "-c", "echo 'Ollama runs natively on macOS (Metal GPU)' && sleep infinity"]
+    volumes: []
+    environment: []
+    restart: "no"
+
+  open-webui:
+    volumes:
+      - ${HOME}:${HOME}:ro
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+
+  sse-proxy:
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
