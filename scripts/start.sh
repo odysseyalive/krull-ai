@@ -127,13 +127,42 @@ if ! docker info &> /dev/null; then
     exit 1
 fi
 
+# --- .env file management ---
+# Copy .env.sample as starting point if .env doesn't exist
+ENV_FILE="$PROJECT_DIR/.env"
+if [ ! -f "$ENV_FILE" ]; then
+    if [ -f "$PROJECT_DIR/.env.sample" ]; then
+        cp "$PROJECT_DIR/.env.sample" "$ENV_FILE"
+        echo "[+] Created .env from .env.sample"
+    else
+        cat > "$ENV_FILE" << 'ENV_EOF'
+OLLAMA_MODEL=frob/qwen3.5-instruct:9b
+OLLAMA_NUM_CTX=131072
+ENV_EOF
+    fi
+fi
+
+# Ensure model and context have defaults if missing from .env
+grep -q '^OLLAMA_MODEL=' "$ENV_FILE" || echo "OLLAMA_MODEL=frob/qwen3.5-instruct:9b" >> "$ENV_FILE"
+grep -q '^OLLAMA_NUM_CTX=' "$ENV_FILE" || echo "OLLAMA_NUM_CTX=131072" >> "$ENV_FILE"
+
+# Source .env so we can use the values in this script
+set -a
+source "$ENV_FILE"
+set +a
+
 # Check NVIDIA — verify both the container runtime AND that the driver is actually loaded
 COMPOSE_FILES="-f $PROJECT_DIR/docker-compose.yml"
 if docker info 2>/dev/null | grep -qi nvidia && nvidia-smi &>/dev/null; then
     echo "[+] NVIDIA GPU available (driver loaded)"
     COMPOSE_FILES="$COMPOSE_FILES -f $PROJECT_DIR/docker-compose.gpu.yml"
+    # Update COMPOSE_FILE in .env so manual docker compose commands also use GPU
+    sed -i '/^COMPOSE_FILE=/d' "$ENV_FILE"
+    echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> "$ENV_FILE"
 else
     echo "[!] NVIDIA GPU not available — Ollama will use CPU only."
+    # Remove GPU from .env if it was previously set
+    sed -i '/^COMPOSE_FILE=/d' "$ENV_FILE"
     if ! docker info 2>/dev/null | grep -qi nvidia; then
         install_hint nvidia-container-toolkit
     elif ! nvidia-smi &>/dev/null; then
@@ -216,6 +245,10 @@ engines:
 SEARXNG_EOF
 fi
 
+# Update LiteLLM config with current model from .env
+echo "[+] Model: $OLLAMA_MODEL (context: $OLLAMA_NUM_CTX)"
+sed -i "s|model: openai/[^ ]*|model: openai/$OLLAMA_MODEL|g" "$PROJECT_DIR/litellm/config.yaml"
+
 echo ""
 echo "Starting services..."
 docker compose $COMPOSE_FILES up -d
@@ -224,12 +257,12 @@ echo ""
 echo "Waiting for services to be ready..."
 sleep 5
 
-# Auto-pull frob/qwen3.5-instruct:9b if not present (recommended model for tool calling)
-if docker exec krull-ollama ollama list 2>/dev/null | grep -q "frob/qwen3.5-instruct:9b"; then
-    echo "[+] frob/qwen3.5-instruct:9b model found"
+# Auto-pull model if not present
+if docker exec krull-ollama ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+    echo "[+] $OLLAMA_MODEL model found"
 else
-    echo "[!] frob/qwen3.5-instruct:9b not found. Pulling recommended model (~6.6 GB)..."
-    "$SCRIPT_DIR/pull-model.sh" frob/qwen3.5-instruct:9b
+    echo "[!] $OLLAMA_MODEL not found. Pulling model..."
+    "$SCRIPT_DIR/pull-model.sh" "$OLLAMA_MODEL"
 fi
 
 echo ""

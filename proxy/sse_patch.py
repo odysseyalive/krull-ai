@@ -14,6 +14,7 @@ Flow: Claude Code → LiteLLM → this proxy → Ollama /v1/chat/completions
 
 import json
 import os
+import re
 import sys
 import uuid
 import time
@@ -107,36 +108,68 @@ PARAM_FIXES = {
     "Skill": {"name": "skill", "command": "skill", "skill_name": "skill"},
 }
 
+# Valid parameter names per tool — strip anything not in this set
+VALID_PARAMS = {
+    "Read": {"file_path", "limit", "offset", "pages"},
+    "Write": {"file_path", "content"},
+    "Edit": {"file_path", "old_string", "new_string", "replace_all"},
+    "Bash": {"command", "description", "timeout", "run_in_background"},
+    "Glob": {"pattern", "path"},
+    "Grep": {"pattern", "path", "glob", "type", "output_mode", "head_limit",
+             "offset", "context", "-A", "-B", "-C", "-i", "-n", "multiline"},
+    "Skill": {"skill", "args"},
+    "Agent": {"prompt", "description", "subagent_type", "name", "mode",
+              "model", "isolation", "run_in_background"},
+}
+
 
 def fix_tool_call_params(tool_name: str, arguments: str) -> str:
-    """Fix common parameter name mistakes in tool call arguments."""
-    fixes = PARAM_FIXES.get(tool_name)
-    if not fixes:
-        return arguments
+    """Fix common parameter name mistakes and strip invalid params."""
     try:
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
         if not isinstance(args, dict):
             return arguments
-        fixed = {}
-        changed = False
-        for k, v in args.items():
-            if k in fixes:
-                fixed[fixes[k]] = v
-                changed = True
-            else:
-                fixed[k] = v
-        if changed:
-            print(f"[PROXY] Fixed tool params for {tool_name}: {list(args.keys())} → {list(fixed.keys())}",
-                  file=sys.stderr, flush=True)
-            return json.dumps(fixed)
-        return arguments if isinstance(arguments, str) else json.dumps(arguments)
     except (json.JSONDecodeError, TypeError):
         return arguments
+
+    changed = False
+
+    # Step 1: Rename known mistakes
+    fixes = PARAM_FIXES.get(tool_name)
+    if fixes:
+        renamed = {}
+        for k, v in args.items():
+            if k in fixes:
+                renamed[fixes[k]] = v
+                changed = True
+            else:
+                renamed[k] = v
+        args = renamed
+
+    # Step 2: Strip parameters that don't belong to this tool
+    valid = VALID_PARAMS.get(tool_name)
+    if valid:
+        stripped = {k: v for k, v in args.items() if k in valid}
+        if len(stripped) != len(args):
+            removed = set(args.keys()) - set(stripped.keys())
+            print(f"[PROXY] Stripped invalid params from {tool_name}: {removed}",
+                  file=sys.stderr, flush=True)
+            args = stripped
+            changed = True
+
+    if changed:
+        print(f"[PROXY] Fixed tool params for {tool_name}: {list(args.keys())}",
+              file=sys.stderr, flush=True)
+        return json.dumps(args)
+    return arguments if isinstance(arguments, str) else json.dumps(arguments)
 
 
 # ── Inlet Filters ─────────────────────────────────────────────────────────
 
 ENABLE_TRUTH_GUARD = os.environ.get("ENABLE_TRUTH_GUARD", "true").lower() == "true"
+ENABLE_MAP_SEARCH = os.environ.get("ENABLE_MAP_SEARCH", "true").lower() == "true"
+PHOTON_URL = os.environ.get("PHOTON_URL", "http://krull-photon:2322")
+TILESERVER_URL = os.environ.get("TILESERVER_URL", "http://localhost:8070")
 
 TRUTH_GUARD_CONTENT = (
     "[Truth Guard — Intellectual Integrity Rules]\n\n"
@@ -243,8 +276,15 @@ async def inject_web_search(messages: list) -> list:
     return messages
 
 
+def _xml_element_text(el) -> str:
+    """Extract all text from an XML element, including text within child tags."""
+    import xml.etree.ElementTree as ET
+    raw = ET.tostring(el, encoding="unicode", method="text")
+    return raw.strip() if raw else ""
+
+
 async def inject_kiwix(messages: list) -> list:
-    """Search Kiwix for relevant offline knowledge articles."""
+    """Search Kiwix for relevant offline knowledge with full-text snippets."""
     if not messages:
         return messages
     last = messages[-1]
@@ -257,37 +297,166 @@ async def inject_kiwix(messages: list) -> list:
         return messages
 
     try:
-        suggest_url = (
-            f"{KIWIX_URL}/suggest"
-            f"?term={urllib.parse.quote(query)}&limit=3"
+        # Use the full-text search API (XML format) to get content snippets
+        search_url = (
+            f"{KIWIX_URL}/search"
+            f"?pattern={urllib.parse.quote(query)}&format=xml&pageLength=3"
         )
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(suggest_url)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(search_url)
             if resp.status_code != 200:
                 return messages
-            suggestions = resp.json()
+            xml_text = resp.text
 
-        if not suggestions:
+        # Parse the XML response for titles, snippets, and sources
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_text)
+        channel = root.find("channel")
+        if channel is None:
             return messages
 
-        lines = ["[Offline Knowledge Base (Kiwix)]"]
-        for i, item in enumerate(suggestions, 1):
-            title = item.get("label", item.get("value", ""))
-            path = item.get("path", item.get("url", ""))
-            if title:
-                lines.append(f"{i}. {title}")
-                if path:
-                    lines.append(f"   Source: http://localhost:8090{path}")
+        items = channel.findall("item")
+        if not items:
+            return messages
+
+        lines = ["[Offline Knowledge Base (Kiwix) — full-text search results]"]
+        for i, item in enumerate(items, 1):
+            title_el = item.find("title")
+            desc_el = item.find("description")
+            link_el = item.find("link")
+            book_el = item.find("book/title")
+            title = title_el.text if title_el is not None else "Unknown"
+            snippet = _xml_element_text(desc_el) if desc_el is not None else ""
+            link = link_el.text if link_el is not None else ""
+            book = book_el.text if book_el is not None else ""
+
+            lines.append(f"--- Result {i}: {title} ---")
+            if book:
+                lines.append(f"Source: {book}")
+            if snippet:
+                # Truncate very long snippets
+                if len(snippet) > 800:
+                    snippet = snippet[:800] + "..."
+                lines.append(snippet)
+            if link:
+                lines.append(f"Read more: http://localhost:8090{link}")
+            lines.append("")
+
         lines.append("[End Offline Knowledge Base]")
         lines.append("")
 
-        if len(lines) > 3:
+        if len(lines) > 4:
             messages[-1] = dict(last)
             messages[-1]["content"] = "\n".join(lines) + f"\n{messages[-1]['content']}"
 
     except Exception as e:
         print(f"[PROXY] Kiwix error: {e}", file=sys.stderr, flush=True)
+
+    return messages
+
+
+_LOCATION_PATTERNS = [
+    re.compile(r"\b(?:where|find|locate|nearest|nearby|close to|around)\b", re.I),
+    re.compile(r"\b(?:directions?|route|navigate|how (?:do I |to )get to)\b", re.I),
+    re.compile(r"\b(?:map|maps|address|location|coordinates?|gps)\b", re.I),
+    re.compile(r"\b(?:restaurant|cafe|coffee|shop|store|hotel|hospital|school|park|museum|library|airport|station)\b", re.I),
+    re.compile(r"\b(?:street|road|avenue|boulevard|highway|drive|lane|plaza)\b", re.I),
+    re.compile(r"\b(?:city|town|county|state|country|region|district|neighborhood)\b", re.I),
+    re.compile(r"\b(?:latitude|longitude|lat|lon|lng)\b", re.I),
+    re.compile(r"\b(?:zip\s*code|postal\s*code)\b", re.I),
+]
+
+
+def _is_location_query(text: str) -> bool:
+    return any(p.search(text) for p in _LOCATION_PATTERNS)
+
+
+async def inject_map_search(messages: list) -> list:
+    """Search Photon geocoding for location-related queries."""
+    if not messages:
+        return messages
+    last = messages[-1]
+    if last.get("role") != "user":
+        return messages
+    query = last.get("content", "")
+    if not query or len(query.strip()) < 3:
+        return messages
+    if isinstance(query, list):
+        return messages
+    if not _is_location_query(query):
+        return messages
+
+    try:
+        search_url = (
+            f"{PHOTON_URL}/api"
+            f"?q={urllib.parse.quote(query)}"
+            f"&limit={SEARCH_RESULTS}"
+        )
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(search_url)
+            if resp.status_code != 200:
+                return messages
+            data = resp.json()
+
+        features = data.get("features", [])
+        if not features:
+            return messages
+
+        lines = ["[Offline Map Search Results — OpenStreetMap via Photon]"]
+        for i, feature in enumerate(features, 1):
+            props = feature.get("properties", {})
+            geom = feature.get("geometry", {})
+            coords = geom.get("coordinates", [])
+
+            name = props.get("name", "")
+            street = props.get("street", "")
+            housenumber = props.get("housenumber", "")
+            city = props.get("city", "")
+            state = props.get("state", "")
+            country = props.get("country", "")
+            osm_type = props.get("osm_value", props.get("type", ""))
+
+            parts = []
+            if housenumber and street:
+                parts.append(f"{housenumber} {street}")
+            elif street:
+                parts.append(street)
+            if city:
+                parts.append(city)
+            if state:
+                parts.append(state)
+            if country:
+                parts.append(country)
+            address = ", ".join(parts)
+
+            line = f"{i}. {name}" if name else f"{i}. {address}"
+            if name and address:
+                line += f"\n   Address: {address}"
+            if osm_type:
+                line += f"\n   Type: {osm_type}"
+            if len(coords) >= 2:
+                lon, lat = coords[0], coords[1]
+                line += f"\n   Coordinates: {lat:.6f}, {lon:.6f}"
+                line += f"\n   Map: {TILESERVER_URL}/#17/{lat}/{lon}"
+
+            lines.append(line)
+
+        lines.append("[End Map Search Results]")
+        lines.append("")
+        lines.append(
+            "IMPORTANT: When using location information from the map search "
+            "results above, cite OpenStreetMap as the source. Include "
+            "coordinates and addresses in your response."
+        )
+        lines.append("")
+
+        messages[-1] = dict(last)
+        messages[-1]["content"] = "\n".join(lines) + f"\nUser question: {query}"
+
+    except Exception as e:
+        print(f"[PROXY] Map search error: {e}", file=sys.stderr, flush=True)
 
     return messages
 
@@ -376,6 +545,8 @@ async def apply_filters(messages: list, has_tools: bool = False) -> list:
             messages = await inject_web_search(messages)
         if ENABLE_KIWIX:
             messages = await inject_kiwix(messages)
+        if ENABLE_MAP_SEARCH:
+            messages = await inject_map_search(messages)
     messages = compact_context(messages)
     return messages
 

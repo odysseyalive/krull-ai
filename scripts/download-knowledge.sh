@@ -51,8 +51,26 @@ CATALOG=(
     # Reference
     "wiktionary|wiktionary/wiktionary_en_all_nopic_2026-02.zim|English dictionary & thesaurus|8.2 GB"
 
-    # Books
+    # Project Gutenberg (by Library of Congress category)
     "gutenberg|gutenberg/gutenberg_en_all_2025-11.zim|Project Gutenberg — all English books|206 GB"
+    "gutenberg-fiction|gutenberg/gutenberg_en_lcc-pz_2026-03.zim|Gutenberg — Fiction & Juvenile|20 GB"
+    "gutenberg-literature|gutenberg/gutenberg_en_lcc-ps_2026-03.zim|Gutenberg — American Literature|14 GB"
+    "gutenberg-british-lit|gutenberg/gutenberg_en_lcc-pr_2026-03.zim|Gutenberg — English Literature|20 GB"
+    "gutenberg-history|gutenberg/gutenberg_en_lcc-d_2026-03.zim|Gutenberg — World History|37 GB"
+    "gutenberg-us-history|gutenberg/gutenberg_en_lcc-e_2026-03.zim|Gutenberg — US History|10 GB"
+    "gutenberg-science|gutenberg/gutenberg_en_lcc-q_2026-03.zim|Gutenberg — Science|12 GB"
+    "gutenberg-philosophy|gutenberg/gutenberg_en_lcc-b_2026-03.zim|Gutenberg — Philosophy & Religion|14 GB"
+    "gutenberg-social-science|gutenberg/gutenberg_en_lcc-h_2026-03.zim|Gutenberg — Social Sciences|9.1 GB"
+    "gutenberg-poetry|gutenberg/gutenberg_en_lcc-pq_2026-03.zim|Gutenberg — French/Italian/Spanish Lit|9.3 GB"
+    "gutenberg-law|gutenberg/gutenberg_en_lcc-k_2026-03.zim|Gutenberg — Law|2.3 GB"
+    "gutenberg-medicine|gutenberg/gutenberg_en_lcc-r_2026-03.zim|Gutenberg — Medicine|3.3 GB"
+    "gutenberg-music|gutenberg/gutenberg_en_lcc-m_2026-03.zim|Gutenberg — Music|4.2 GB"
+    "gutenberg-art|gutenberg/gutenberg_en_lcc-n_2026-03.zim|Gutenberg — Fine Arts|37 GB"
+    "gutenberg-military|gutenberg/gutenberg_en_lcc-u_2026-03.zim|Gutenberg — Military Science|1.4 GB"
+    "gutenberg-geography|gutenberg/gutenberg_en_lcc-g_2026-03.zim|Gutenberg — Geography & Travel|5.1 GB"
+    "gutenberg-technology|gutenberg/gutenberg_en_lcc-t_2026-03.zim|Gutenberg — Technology|6.3 GB"
+    "gutenberg-education|gutenberg/gutenberg_en_lcc-l_2026-03.zim|Gutenberg — Education|3.3 GB"
+    "gutenberg-political|gutenberg/gutenberg_en_lcc-j_2026-03.zim|Gutenberg — Political Science|4.1 GB"
 )
 
 # --- Bundles ---
@@ -75,6 +93,12 @@ print_bundles() {
     echo "                    stackexchange-unix, stackexchange-codereview,"
     echo "                    stackexchange-security, stackexchange-softeng"
     echo ""
+    echo "  gutenberg-essentials  Classic literature & reference (~65 GB)"
+    echo "                    fiction, american lit, english lit, poetry, philosophy"
+    echo ""
+    echo "  gutenberg-stem    Science, technology, medicine (~22 GB)"
+    echo "                    science, technology, medicine"
+    echo ""
 }
 
 get_bundle_keys() {
@@ -93,6 +117,12 @@ get_bundle_keys() {
             ;;
         community)
             echo "stackexchange-unix stackexchange-codereview stackexchange-security stackexchange-softeng"
+            ;;
+        gutenberg-essentials)
+            echo "gutenberg-fiction gutenberg-literature gutenberg-british-lit gutenberg-poetry gutenberg-philosophy"
+            ;;
+        gutenberg-stem)
+            echo "gutenberg-science gutenberg-technology gutenberg-medicine"
             ;;
         *)
             echo ""
@@ -133,10 +163,19 @@ print_usage() {
         esac
     done
     echo ""
-    echo "  Reference & Books:"
+    echo "  Reference:"
     for entry in "${CATALOG[@]}"; do
         IFS='|' read -r key file desc size <<< "$entry"
-        case "$key" in wiktionary|gutenberg)
+        case "$key" in wiktionary)
+            printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
+            ;;
+        esac
+    done
+    echo ""
+    echo "  Project Gutenberg (60,000+ free books):"
+    for entry in "${CATALOG[@]}"; do
+        IFS='|' read -r key file desc size <<< "$entry"
+        case "$key" in gutenberg*)
             printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
             ;;
         esac

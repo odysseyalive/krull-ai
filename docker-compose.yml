@@ -53,6 +53,7 @@ services:
     depends_on:
       - ollama
       - searxng
+      - photon
     restart: unless-stopped
     ports:
       - "4001:8081"
@@ -63,9 +64,12 @@ services:
       - ENABLE_WEB_SEARCH=true
       - ENABLE_KIWIX=true
       - ENABLE_DATE=true
+      - ENABLE_MAP_SEARCH=true
+      - PHOTON_URL=http://krull-photon:2322
+      - TILESERVER_URL=http://localhost:8070
       - SEARCH_RESULTS=5
-      - OLLAMA_NUM_CTX=131072
-      - CONTEXT_COMPACT_LIMIT=98304
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-131072}
+      - CONTEXT_COMPACT_LIMIT=${CONTEXT_COMPACT_LIMIT:-98304}
       - PORT=8081
 
   litellm:
@@ -101,16 +105,13 @@ services:
         fi
 
   map-viewer:
-    image: nginx:alpine
+    build: ./map-viewer
     container_name: krull-map-viewer
     depends_on:
       - tileserver
     restart: unless-stopped
     ports:
       - "8070:80"
-    volumes:
-      - ./map-viewer:/usr/share/nginx/html:ro
-      - ./map-viewer/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
   photon:
     image: rtuszik/photon-docker:latest
@@ -121,7 +122,7 @@ services:
     volumes:
       - ./data/photon:/photon/photon_data
     environment:
-      - COUNTRY_CODE=us
+      - COUNTRY_CODE=${PHOTON_COUNTRY_CODE:-}
 
   kiwix:
     image: ghcr.io/kiwix/kiwix-serve:latest

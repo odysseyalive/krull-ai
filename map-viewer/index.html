@@ -4,388 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Krull AI — Offline Maps</title>
-  <link rel="stylesheet" href="/lib/maplibre-gl.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    #map { position: absolute; inset: 0; }
-
-    /* Search bar */
-    .search-container {
-      position: absolute;
-      top: 12px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10;
-      width: min(420px, calc(100% - 120px));
-    }
-    .search-container input {
-      width: 100%;
-      padding: 10px 16px;
-      font-size: 15px;
-      border: none;
-      border-radius: 8px;
-      background: #fff;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      outline: none;
-    }
-    .search-container input:focus {
-      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-    }
-    .search-results {
-      margin-top: 4px;
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      max-height: 320px;
-      overflow-y: auto;
-      display: none;
-    }
-    .search-results.visible { display: block; }
-    .search-result {
-      padding: 10px 16px;
-      cursor: pointer;
-      border-bottom: 1px solid #f0f0f0;
-    }
-    .search-result:last-child { border-bottom: none; }
-    .search-result:hover { background: #f5f5f5; }
-    .search-result .name { font-weight: 500; font-size: 14px; }
-    .search-result .detail { font-size: 12px; color: #666; margin-top: 2px; }
-
-    /* Layer switcher */
-    .layer-control {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 10;
-    }
-    .layer-btn {
-      background: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 13px;
-      cursor: pointer;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .layer-btn:hover { background: #f5f5f5; }
-    .layer-menu {
-      display: none;
-      margin-top: 4px;
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      padding: 8px 0;
-      min-width: 140px;
-    }
-    .layer-menu.visible { display: block; }
-    .layer-option {
-      padding: 6px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .layer-option:hover { background: #f5f5f5; }
-    .layer-option.active { font-weight: 600; }
-
-    /* Attribution */
-    .maplibregl-ctrl-attrib {
-      font-size: 11px !important;
-    }
-
-    /* Coordinate display */
-    .coords {
-      position: absolute;
-      bottom: 28px;
-      left: 12px;
-      z-index: 10;
-      background: rgba(255,255,255,0.85);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #333;
-      font-family: monospace;
-      pointer-events: none;
-    }
-  </style>
 </head>
 <body>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Krull Maps</span>
+      <button id="sidebar-close" class="sidebar-close" aria-label="Close sidebar">&times;</button>
+    </div>
+
+    <div class="sidebar-search">
+      <input id="search" type="text" placeholder="Search places, roads, features..." autocomplete="off">
+      <div id="results" class="search-results"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header" data-toggle="styles">Map Style</div>
+      <div class="section-body" id="style-options"></div>
+    </div>
+
+    <div class="sidebar-section" id="overlays-section" style="display:none">
+      <div class="section-header" data-toggle="overlays">Overlays</div>
+      <div class="section-body" id="overlay-options"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header" data-toggle="labels">Labels</div>
+      <div class="section-body" id="label-options"></div>
+    </div>
+  </aside>
+
+  <!-- Map -->
   <div id="map"></div>
 
-  <div class="search-container">
-    <input id="search" type="text" placeholder="Search places..." autocomplete="off">
-    <div id="results" class="search-results"></div>
+  <!-- Sidebar toggle (when closed) -->
+  <button id="sidebar-open" class="sidebar-open" aria-label="Open sidebar">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+
+  <!-- Bottom bar -->
+  <div id="bottom-bar" class="bottom-bar">
+    <span id="coords" class="coords-display"></span>
+    <span id="zoom-level" class="zoom-display"></span>
   </div>
 
-  <div class="layer-control">
-    <button class="layer-btn" id="layer-toggle">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 5l7 4 7-4-7-4z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M1 8l7 4 7-4" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M1 11l7 4 7-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-      Style
-    </button>
-    <div class="layer-menu" id="layer-menu"></div>
-  </div>
-
-  <div class="coords" id="coords"></div>
-
-  <script src="/lib/maplibre-gl.js"></script>
-  <script>
-    const TILE_API = window.location.origin;
-    const PHOTON_URL = 'http://localhost:2322';
-
-    // Detect available tile sources from Martin catalog
-    async function getTileSources() {
-      try {
-        var resp = await fetch(TILE_API + '/catalog');
-        var catalog = await resp.json();
-        return Object.keys(catalog.tiles || {});
-      } catch { return []; }
-    }
-
-    // Style cache
-    var styleCache = {};
-
-    // Load a pre-built style JSON and set the tile source URL
-    async function buildStyle(sourceId, theme) {
-      if (!styleCache[theme]) {
-        var resp = await fetch('/style-' + theme + '.json');
-        styleCache[theme] = await resp.json();
-      }
-      var style = JSON.parse(JSON.stringify(styleCache[theme]));
-      // Use explicit tiles URL instead of tilejson url to avoid Martin's internal hostname
-      delete style.sources.tiles.url;
-      style.sources.tiles.tiles = [TILE_API + '/' + sourceId + '/{z}/{x}/{y}'];
-      return style;
-    }
-
-    const THEMES = [
-      { id: "light", label: "Light" },
-      { id: "dark", label: "Dark" },
-      { id: "white", label: "White" },
-      { id: "black", label: "Black" },
-      { id: "grayscale", label: "Grayscale" },
-    ];
-
-    let map;
-    let currentTheme = "light";
-    let currentSource = null;
-
-    function escapeHtml(s) {
-      const d = document.createElement("div");
-      d.textContent = s;
-      return d.innerHTML;
-    }
-
-    // Build a search result element safely using DOM APIs
-    function createResultElement(feature, onClick) {
-      const p = feature.properties || {};
-      const name = p.name || p.street || "Unknown";
-      const parts = [p.city, p.state, p.country].filter(Boolean);
-      const detail = parts.join(", ");
-      const type = p.osm_value || p.type || "";
-
-      const el = document.createElement("div");
-      el.className = "search-result";
-
-      const nameEl = document.createElement("div");
-      nameEl.className = "name";
-      nameEl.textContent = name;
-      if (type) {
-        const typeSpan = document.createElement("span");
-        typeSpan.style.cssText = "color:#999;font-weight:normal;font-size:12px;margin-left:6px";
-        typeSpan.textContent = type;
-        nameEl.appendChild(typeSpan);
-      }
-      el.appendChild(nameEl);
-
-      if (detail) {
-        const detailEl = document.createElement("div");
-        detailEl.className = "detail";
-        detailEl.textContent = detail;
-        el.appendChild(detailEl);
-      }
-
-      el.addEventListener("click", onClick);
-      return el;
-    }
-
-    async function init() {
-      const sources = await getTileSources();
-      if (sources.length === 0) {
-        const msg = document.createElement("div");
-        msg.style.cssText = "display:flex;align-items:center;justify-content:center;height:100%;font-size:18px;color:#666;text-align:center;padding:20px";
-        msg.textContent = "No tile sources found. Download maps first: ./scripts/download-maps.sh oregon";
-        document.getElementById("map").appendChild(msg);
-        return;
-      }
-
-      currentSource = sources[0];
-
-      // Get bounds from tile metadata
-      let center = [-122.68, 45.52];
-      let zoom = 11;
-      try {
-        const meta = await (await fetch(TILE_API + '/' + currentSource)).json();
-        if (meta.center) {
-          center = [meta.center[0], meta.center[1]];
-          zoom = meta.center[2] || zoom;
-        }
-      } catch {}
-
-      // Check URL hash for position
-      if (window.location.hash) {
-        const parts = window.location.hash.replace('#', '').split('/');
-        if (parts.length >= 3) {
-          zoom = parseFloat(parts[0]);
-          center = [parseFloat(parts[2]), parseFloat(parts[1])];
-        }
-      }
-
-      var initialStyle = await buildStyle(currentSource, currentTheme);
-      map = new maplibregl.Map({
-        container: "map",
-        style: initialStyle,
-        center: center,
-        zoom: zoom,
-        hash: true
-      });
-
-      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-      map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-right");
-      map.addControl(new maplibregl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true
-      }), "bottom-right");
-
-      // Coordinate display
-      const coordsEl = document.getElementById("coords");
-      map.on("mousemove", function(e) {
-        coordsEl.textContent = e.lngLat.lat.toFixed(5) + ", " + e.lngLat.lng.toFixed(5);
-      });
-
-      // Click to show coordinates popup
-      map.on("click", function(e) {
-        const lat = e.lngLat.lat.toFixed(6);
-        const lng = e.lngLat.lng.toFixed(6);
-        const coordDiv = document.createElement("div");
-        coordDiv.style.cssText = "font-family:monospace;font-size:13px;padding:4px";
-        coordDiv.textContent = lat + ", " + lng;
-        new maplibregl.Popup({ closeButton: true, maxWidth: "260px" })
-          .setLngLat(e.lngLat)
-          .setDOMContent(coordDiv)
-          .addTo(map);
-      });
-
-      // Layer switcher
-      var menu = document.getElementById("layer-menu");
-      THEMES.forEach(function(t) {
-        var div = document.createElement("div");
-        div.className = "layer-option" + (t.id === currentTheme ? " active" : "");
-        div.textContent = t.label;
-        div.addEventListener("click", async function() {
-          currentTheme = t.id;
-          map.setStyle(await buildStyle(currentSource, currentTheme));
-          menu.querySelectorAll(".layer-option").forEach(function(el) { el.classList.remove("active"); });
-          div.classList.add("active");
-          menu.classList.remove("visible");
-        });
-        menu.appendChild(div);
-      });
-
-      document.getElementById("layer-toggle").addEventListener("click", function() {
-        menu.classList.toggle("visible");
-      });
-      document.addEventListener("click", function(e) {
-        if (!e.target.closest(".layer-control")) menu.classList.remove("visible");
-      });
-
-      // Search via Photon
-      setupSearch();
-    }
-
-    function setupSearch() {
-      var input = document.getElementById("search");
-      var resultsEl = document.getElementById("results");
-      var debounce = null;
-
-      input.addEventListener("input", function() {
-        clearTimeout(debounce);
-        var q = input.value.trim();
-        if (q.length < 2) { resultsEl.classList.remove("visible"); return; }
-        debounce = setTimeout(function() { searchPhoton(q); }, 300);
-      });
-
-      input.addEventListener("keydown", function(e) {
-        if (e.key === "Escape") {
-          resultsEl.classList.remove("visible");
-          input.blur();
-        }
-      });
-
-      document.addEventListener("click", function(e) {
-        if (!e.target.closest(".search-container")) resultsEl.classList.remove("visible");
-      });
-    }
-
-    async function searchPhoton(query) {
-      var resultsEl = document.getElementById("results");
-      // Clear previous results
-      while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
-
-      try {
-        var resp = await fetch(PHOTON_URL + '/api?q=' + encodeURIComponent(query) + '&limit=8');
-        var data = await resp.json();
-        var features = data.features || [];
-
-        if (features.length === 0) {
-          var noResult = document.createElement("div");
-          noResult.className = "search-result";
-          var noDetail = document.createElement("div");
-          noDetail.className = "detail";
-          noDetail.textContent = "No results found";
-          noResult.appendChild(noDetail);
-          resultsEl.appendChild(noResult);
-          resultsEl.classList.add("visible");
-          return;
-        }
-
-        features.forEach(function(feature) {
-          var el = createResultElement(feature, function() {
-            var coords = feature.geometry.coordinates;
-            map.flyTo({ center: coords, zoom: 14, duration: 1500 });
-            var popupDiv = document.createElement("div");
-            popupDiv.style.cssText = "font-size:14px;padding:4px";
-            var strong = document.createElement("strong");
-            strong.textContent = feature.properties.name || "";
-            popupDiv.appendChild(strong);
-            new maplibregl.Popup({ closeButton: true, maxWidth: "280px" })
-              .setLngLat(coords)
-              .setDOMContent(popupDiv)
-              .addTo(map);
-            resultsEl.classList.remove("visible");
-            document.getElementById("search").value = feature.properties.name || "";
-          });
-          resultsEl.appendChild(el);
-        });
-
-        resultsEl.classList.add("visible");
-      } catch {
-        var errEl = document.createElement("div");
-        errEl.className = "search-result";
-        var errDetail = document.createElement("div");
-        errDetail.className = "detail";
-        errDetail.textContent = "Search unavailable (is Photon running?)";
-        errEl.appendChild(errDetail);
-        resultsEl.appendChild(errEl);
-        resultsEl.classList.add("visible");
-      }
-    }
-
-    init();
-  </script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

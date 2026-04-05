@@ -190,27 +190,6 @@ install_function \
     "filter"
 
 install_function \
-    "plan_mode_assist" \
-    "Plan Mode Assistant" \
-    "Reinforces plan mode instructions for local models with phase tracking and guardrails" \
-    "$FUNCTIONS_DIR/plan_mode_assist.py" \
-    "filter"
-
-install_function \
-    "plan_executor" \
-    "Plan Execution Tracker" \
-    "Tracks plan step completion during implementation and keeps the model focused" \
-    "$FUNCTIONS_DIR/plan_executor.py" \
-    "filter"
-
-install_function \
-    "skill_adapter" \
-    "Skill Adapter" \
-    "Adapts Claude Code skill instructions for local model capabilities" \
-    "$FUNCTIONS_DIR/skill_adapter.py" \
-    "filter"
-
-install_function \
     "map_search" \
     "Offline Map Search" \
     "Searches Photon geocoding for location queries and injects results with coordinates" \
@@ -273,9 +252,6 @@ echo "    - Current Date & Time"
 echo "    - Context Manager (auto-compaction)"
 echo "    - Auto Web Search (SearXNG)"
 echo "    - Kiwix Knowledge Lookup"
-echo "    - Plan Mode Assistant (local model support)"
-echo "    - Plan Execution Tracker (implementation guidance)"
-echo "    - Skill Adapter (local model skill support)"
 echo "    - Offline Map Search (Photon geocoding)"
 echo ""
 echo "  All filters are enabled globally."

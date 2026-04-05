@@ -1,12 +1,20 @@
 """
 Open WebUI Inlet Filter: Kiwix Offline Knowledge Lookup
-Searches the local Kiwix instance for relevant articles and injects
-summaries into the context before the model responds.
+Searches the local Kiwix instance for relevant articles with full-text
+snippets and injects them into the context before the model responds.
 """
 
+import re
 import urllib.parse
+import xml.etree.ElementTree as ET
 from pydantic import BaseModel, Field
 from typing import Optional
+
+
+def _xml_element_text(el) -> str:
+    """Extract all text from an XML element, including text within child tags."""
+    raw = ET.tostring(el, encoding="unicode", method="text")
+    return raw.strip() if raw else ""
 
 
 class Filter:
@@ -22,7 +30,7 @@ class Filter:
             default=3, description="Number of Kiwix results to include"
         )
         max_snippet_length: int = Field(
-            default=500, description="Max characters per article snippet"
+            default=800, description="Max characters per article snippet"
         )
         enabled: bool = Field(
             default=True, description="Enable/disable Kiwix lookup"
@@ -50,77 +58,74 @@ class Filter:
         try:
             import aiohttp
 
+            # Use full-text search API (XML format) for content snippets
             search_url = (
                 f"{self.valves.kiwix_url}/search"
                 f"?pattern={urllib.parse.quote(query)}"
+                f"&format=xml"
                 f"&pageLength={self.valves.num_results}"
             )
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.get(
+                    search_url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
                     if resp.status != 200:
                         return body
-                    text = await resp.text()
+                    xml_text = await resp.text()
 
-            # Kiwix returns HTML search results — extract what we can
-            # Try the JSON search API first
-            suggest_url = (
-                f"{self.valves.kiwix_url}/suggest"
-                f"?term={urllib.parse.quote(query)}"
-                f"&limit={self.valves.num_results}"
-            )
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(suggest_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    if resp.status != 200:
-                        return body
-                    suggestions = await resp.json()
-
-            if not suggestions:
+            root = ET.fromstring(xml_text)
+            channel = root.find("channel")
+            if channel is None:
                 return body
 
-            context_lines = ["[Offline Knowledge Base (Kiwix)]"]
-            for i, item in enumerate(suggestions, 1):
-                title = item.get("label", item.get("value", ""))
-                path = item.get("path", item.get("url", ""))
-                if title:
-                    snippet = ""
-                    if path:
-                        # Fetch article snippet
-                        try:
-                            article_url = f"{self.valves.kiwix_url}{path}"
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(article_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                                    if resp.status == 200:
-                                        html = await resp.text()
-                                        # Strip HTML tags for a rough snippet
-                                        import re
-                                        text = re.sub(r"<[^>]+>", " ", html)
-                                        text = re.sub(r"\s+", " ", text).strip()
-                                        snippet = text[: self.valves.max_snippet_length]
-                        except Exception:
-                            pass
+            items = channel.findall("item")
+            if not items:
+                return body
 
-                    kiwix_public_url = "http://localhost:8090"
-                    full_url = f"{kiwix_public_url}{path}" if path else ""
-                    context_lines.append(f"{i}. {title}")
-                    if full_url:
-                        context_lines.append(f"   Source: {full_url}")
-                    if snippet:
-                        context_lines.append(f"   {snippet}")
+            context_lines = [
+                "[Offline Knowledge Base (Kiwix) — full-text search results]"
+            ]
+            kiwix_public_url = "http://localhost:8090"
+
+            for i, item in enumerate(items, 1):
+                title_el = item.find("title")
+                desc_el = item.find("description")
+                link_el = item.find("link")
+                book_el = item.find("book/title")
+
+                title = title_el.text if title_el is not None else "Unknown"
+                snippet = (
+                    _xml_element_text(desc_el)
+                    if desc_el is not None
+                    else ""
+                )
+                link = link_el.text if link_el is not None else ""
+                book = book_el.text if book_el is not None else ""
+
+                context_lines.append(f"--- Result {i}: {title} ---")
+                if book:
+                    context_lines.append(f"Source: {book}")
+                if snippet:
+                    if len(snippet) > self.valves.max_snippet_length:
+                        snippet = snippet[: self.valves.max_snippet_length] + "..."
+                    context_lines.append(snippet)
+                if link:
+                    context_lines.append(f"Read more: {kiwix_public_url}{link}")
+                context_lines.append("")
 
             context_lines.append("[End Offline Knowledge Base]")
             context_lines.append("")
             context_lines.append(
                 "IMPORTANT: When using information from the offline knowledge "
                 "base above, you MUST cite your sources. Reference them inline "
-                "(e.g., \"according to [Article Title](URL)...\") and include "
+                '(e.g., "according to [Article Title](URL)...") and include '
                 "a References section at the end of your response with the "
                 "titles and URLs of all sources you used."
             )
             context_lines.append("")
 
-            if len(context_lines) > 2:
+            if len(context_lines) > 4:
                 knowledge_context = "\n".join(context_lines)
                 messages[-1]["content"] = (
                     f"{knowledge_context}\n{messages[-1]['content']}"
