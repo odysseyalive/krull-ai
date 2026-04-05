@@ -2,9 +2,7 @@
 
 **Knowledge, Reasoning, and Unified Local Learning**
 
-*Named after the [1983 film](https://en.wikipedia.org/wiki/Krull_(film)) where a band of unlikely allies sets out on a quest armed with a single, powerful tool. This project does something similar. It assembles a team of open-source tools, each with its own specialty, and points them at a single goal: keeping you productive when your internet goes dark.*
-
-A self-hosted AI stack that runs entirely on your own hardware. Local inference, web search, offline knowledge, geocoding, maps, and an API gateway that lets [Claude Code](https://claude.ai/code) talk to your local models. The thing is, we took care to make sure your existing Claude skills, hooks, and workflows just work. You shouldn't have to change how you use Claude Code just because the brain behind it is local. No cloud dependencies. No API keys. No internet required after setup.
+A self-hosted AI stack that runs entirely on your own hardware. Local inference, web search, offline knowledge, geocoding, maps, and an API gateway that lets [Claude Code](https://claude.ai/code) talk to your local models. Designed to drop into your existing Claude Code projects — your skills, hooks, CLAUDE.md files, and workflows keep working as-is. You shouldn't have to change how you use Claude Code just because the brain behind it is local. No cloud dependencies. No API keys. No internet required after setup.
 
 ## What's Inside
 
