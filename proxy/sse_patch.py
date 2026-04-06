@@ -271,6 +271,21 @@ _SYSTEM_REMINDER_RE = re.compile(
     r"<system-reminder>.*?</system-reminder>", re.DOTALL
 )
 
+# Claude Code wraps slash commands in XML tags, not bare. The actual
+# format observed in real traffic is:
+#   <command-message>study-prep</command-message>
+#   <command-name>/study-prep</command-name>
+#   <command-args>translate How are you?</command-args>
+# So a "starts with /" check on the raw user message will never trip,
+# even after stripping system-reminder blocks. We need to detect the
+# <command-name> tag specifically.
+_COMMAND_NAME_RE = re.compile(
+    r"<command-name>\s*/([a-zA-Z][a-zA-Z0-9_-]*)\s*</command-name>"
+)
+_COMMAND_ARGS_RE = re.compile(
+    r"<command-args>(.*?)</command-args>", re.DOTALL
+)
+
 
 def _strip_system_reminders(content: str) -> str:
     """Remove all <system-reminder>...</system-reminder> blocks from a
@@ -284,15 +299,31 @@ def _strip_system_reminders(content: str) -> str:
     return _SYSTEM_REMINDER_RE.sub("", content).strip()
 
 
+def _parse_slash_command(content: str) -> tuple[str, str] | None:
+    """If the user content contains a slash command (per Claude Code's
+    XML-tagged format), return (skill_name, args). Otherwise return None.
+    Strips system-reminder blocks first so the detection works against
+    the wrapped form Claude Code actually sends."""
+    cleaned = _strip_system_reminders(content)
+    name_match = _COMMAND_NAME_RE.search(cleaned)
+    if not name_match:
+        return None
+    skill_name = name_match.group(1)
+    args_match = _COMMAND_ARGS_RE.search(cleaned)
+    args = args_match.group(1).strip() if args_match else ""
+    return (skill_name, args)
+
+
 def _is_plan_worthy_query(messages: list) -> bool:
     """Heuristic: should the latest user message force planning?
 
     Strips Claude Code's <system-reminder> wrapper blocks first, then
-    checks whether the actual user input starts with a slash command
-    (e.g. /english-to-cw, /study-prep). These are explicit invocations
-    of multi-step skills/workflows and are exactly the queries the small
-    model fails on without planning. Casual queries that don't start
-    with `/` are left alone so simple requests don't get force-planned.
+    looks for a <command-name>/X</command-name> tag — Claude Code's
+    representation of a slash command in the API request. These are
+    explicit invocations of multi-step skills/workflows and are exactly
+    the queries the small model fails on without planning. Casual
+    queries (no command-name tag) are left alone so simple requests
+    don't get force-planned.
     """
     last_user = None
     for m in reversed(messages):
@@ -303,17 +334,107 @@ def _is_plan_worthy_query(messages: list) -> bool:
         return False
     raw = _content_text(last_user.get("content", ""))
     user_input = _strip_system_reminders(raw)
-    is_slash = user_input.startswith("/")
-    # Debug: show both the raw size and the stripped user input so we can
-    # verify the strip is working. Remove once the heuristic is dialed in.
+    return bool(_COMMAND_NAME_RE.search(user_input))
+
+
+# Slash command protocol directive (task #20). When a slash command is
+# detected, this template is appended to the END of the user message
+# content (the highest-attention position the model reads before
+# choosing its next action). Tells the model to invoke the Skill tool
+# as its first action and follow the skill's procedure rather than
+# bypassing it via Grep/Read shortcuts.
+#
+# Empirical: at temperature=0, the qwen 9B deterministically picks Grep
+# over Skill for slash commands because Grep is the most direct path to
+# "find the answer string". This directive is the smallest viable
+# intervention to nudge the deterministic choice toward Skill without
+# removing tools (which we already learned breaks the workflow entirely).
+SLASH_COMMAND_PROTOCOL_TEMPLATE = (
+    "\n\n[Krull Slash Command Protocol]\n"
+    "You received a /{skill_name} slash command. Your FIRST tool call "
+    "MUST be:\n"
+    "    Skill(skill=\"{skill_name}\", args=\"{args}\")\n"
+    "\n"
+    "Do NOT skip ahead by:\n"
+    "  - Searching files directly with Grep or Glob\n"
+    "  - Reading files manually before invoking the skill\n"
+    "  - Producing the answer from training knowledge\n"
+    "\n"
+    "Even if you 'know' the answer, you MUST invoke the skill so the "
+    "skill's procedure runs and each fact in your final answer has a "
+    "verified source from the skill's defined process. Following the "
+    "procedure is more important than reaching an answer fast. The "
+    "skill's procedure is what makes the answer correct AND traceable.\n"
+    "[End Krull Slash Command Protocol]"
+)
+
+
+def inject_slash_command_protocol(messages: list) -> list:
+    """If the latest user message is a slash command, append the
+    Slash Command Protocol directive to the END of the user content.
+    End-of-message position is chosen because it's the highest-attention
+    slot — it's the last thing the model reads before deciding its
+    first action. Handles both string and list content formats.
+    Idempotent: skips if the directive is already present."""
+    if not messages:
+        return messages
+    last_user_idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+    if last_user_idx is None:
+        return messages
+
+    raw_content = messages[last_user_idx].get("content", "")
+    flat_text = _content_text(raw_content)
+    parsed = _parse_slash_command(flat_text)
+    if parsed is None:
+        return messages
+    skill_name, args = parsed
+
+    # Idempotent: don't double-inject if the directive is already there
+    if "[Krull Slash Command Protocol]" in flat_text:
+        return messages
+
+    # Escape any embedded quotes in args so the directive's example
+    # Skill call doesn't accidentally produce malformed JSON in the
+    # model's eyes.
+    escaped_args = args.replace('"', '\\"')
+    directive = SLASH_COMMAND_PROTOCOL_TEMPLATE.format(
+        skill_name=skill_name, args=escaped_args
+    )
+
+    # Modify the message in place, preserving the original content format
+    new_msg = dict(messages[last_user_idx])
+    if isinstance(raw_content, str):
+        new_msg["content"] = raw_content + directive
+    elif isinstance(raw_content, list):
+        # Append to the LAST text-like part. If none exists, add a new one.
+        new_parts = list(raw_content)
+        appended = False
+        for i in range(len(new_parts) - 1, -1, -1):
+            part = new_parts[i]
+            if isinstance(part, dict) and part.get("type") in ("input_text", "text", "output_text"):
+                new_part = dict(part)
+                new_part["text"] = new_part.get("text", "") + directive
+                new_parts[i] = new_part
+                appended = True
+                break
+        if not appended:
+            new_parts.append({"type": "input_text", "text": directive})
+        new_msg["content"] = new_parts
+    else:
+        return messages
+    messages[last_user_idx] = new_msg
+
     print(
-        f"[FILTER-DEBUG] plan_worthy check: starts_with_slash={is_slash} "
-        f"raw_len={len(raw)} stripped_len={len(user_input)} "
-        f"stripped={user_input[:200]!r}",
+        f"[FILTER] +slash_command_protocol (/{skill_name} → Skill, "
+        f"+{len(directive)} chars to user msg)",
         file=sys.stderr,
         flush=True,
     )
-    return is_slash
+    return messages
 
 
 def _history_has_task_create(messages: list) -> bool:
@@ -1387,6 +1508,7 @@ async def apply_filters(
         if ENABLE_MAP_SEARCH:
             messages = await inject_map_search(messages)
     messages = inject_project_context(messages)
+    messages = inject_slash_command_protocol(messages)
     messages = inject_hook_error_hint(messages)
     messages = compact_context(messages)
     return messages
@@ -1422,15 +1544,29 @@ def chat_to_ollama_request(chat_body: dict) -> dict:
         "model": chat_body.get("model", ""),
         "messages": messages,
         "stream": chat_body.get("stream", False),
-        "options": {"num_ctx": NUM_CTX},
+        # Small-model determinism override: force temperature=0 and top_p=1
+        # so the same prompt produces the same output every run. Default
+        # Ollama temperature is ~0.7, which makes the qwen 9B's "use tools"
+        # vs "answer from training" choice essentially a coin flip on
+        # marginal queries. The previous "qʰata mayka?" success was a lucky
+        # roll of those dice; the next run with the same input produced
+        # 1027 chars of hallucination. Tool-driven workflows are far more
+        # valuable as reproducible than as creatively varied.
+        "options": {
+            "num_ctx": NUM_CTX,
+            "temperature": 0.0,
+            "top_p": 1.0,
+        },
     }
     if "tools" in chat_body:
         ollama_body["tools"] = chat_body["tools"]
     if "max_tokens" in chat_body:
         ollama_body["options"]["num_predict"] = chat_body["max_tokens"]
-    if "temperature" in chat_body:
+    # Honor explicit temperature/top_p from the client only if non-zero —
+    # we still allow callers to opt back into sampling if they want.
+    if chat_body.get("temperature"):
         ollama_body["options"]["temperature"] = chat_body["temperature"]
-    if "top_p" in chat_body:
+    if chat_body.get("top_p"):
         ollama_body["options"]["top_p"] = chat_body["top_p"]
     return ollama_body
 
@@ -1861,13 +1997,18 @@ async def proxy(request: Request, path: str):
         original_model = resp_data.get("model", "")
         chat_body = responses_request_to_chat(resp_data)
 
-        # Planning-lock: on slash-command queries with no prior TaskCreate,
-        # narrow the tool list to planning tools only so the model has no
-        # choice but to plan first. See task #15 / maybe_lock_to_planning.
-        chat_body["tools"] = maybe_lock_to_planning(
-            chat_body.get("messages", []),
-            chat_body.get("tools"),
-        )
+        # NOTE: Planning-lock (#15) is disabled. When narrowed to only the
+        # 4 Task tools, the qwen 9B emits 40 chars of prose and zero tool
+        # calls — it doesn't have the planning pattern in its training.
+        # The benchmark succeeds with the full toolset because the model
+        # can drive the workflow directly via Skill/Read/Bash. Removing
+        # capability without giving the model an alternative just kills
+        # the workflow. Helpers (maybe_lock_to_planning, etc.) remain
+        # defined in case we want to revisit with a different shape.
+        # chat_body["tools"] = maybe_lock_to_planning(
+        #     chat_body.get("messages", []),
+        #     chat_body.get("tools"),
+        # )
         # Apply inlet filters to the messages
         has_tools = bool(chat_body.get("tools"))
         chat_body["messages"] = await apply_filters(
@@ -1881,7 +2022,9 @@ async def proxy(request: Request, path: str):
         upstream = f"{OLLAMA_URL}/api/chat"
 
         print(f"[PROXY] Responses API → Ollama (stream={is_streaming} model={original_model} "
-              f"msgs={len(chat_body['messages'])} tools={len(chat_body.get('tools', []))} ctx={NUM_CTX})",
+              f"msgs={len(chat_body['messages'])} tools={len(chat_body.get('tools', []))} "
+              f"ctx={NUM_CTX} temp={ollama_body['options'].get('temperature')} "
+              f"top_p={ollama_body['options'].get('top_p')})",
               file=sys.stderr, flush=True)
 
         # Debug: log message roles and any tool_calls in messages
@@ -2031,11 +2174,12 @@ async def proxy(request: Request, path: str):
     if path in ("chat/completions", "v1/chat/completions", "api/chat/completions"):
         try:
             data = json.loads(body)
-            # Planning-lock: see /responses path above for rationale.
-            data["tools"] = maybe_lock_to_planning(
-                data.get("messages", []),
-                data.get("tools"),
-            )
+            # NOTE: Planning-lock (#15) is disabled. See /responses path
+            # for rationale.
+            # data["tools"] = maybe_lock_to_planning(
+            #     data.get("messages", []),
+            #     data.get("tools"),
+            # )
             has_tools = bool(data.get("tools"))
             data["messages"] = await apply_filters(
                 data.get("messages", []),
