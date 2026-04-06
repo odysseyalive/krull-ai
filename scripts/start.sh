@@ -236,11 +236,11 @@ fi
 
 # Ensure bind-mount directories exist with correct ownership
 mkdir -p "$PROJECT_DIR/data/ollama" "$PROJECT_DIR/data/webui" "$PROJECT_DIR/data/tiles" "$PROJECT_DIR/data/photon"
-mkdir -p "$PROJECT_DIR/searxng"
+mkdir -p "$PROJECT_DIR/data/searxng"
 
 # Write default SearXNG config if it doesn't exist
-if [ ! -f "$PROJECT_DIR/searxng/settings.yml" ]; then
-    cat > "$PROJECT_DIR/searxng/settings.yml" << 'SEARXNG_EOF'
+if [ ! -f "$PROJECT_DIR/data/searxng/settings.yml" ]; then
+    cat > "$PROJECT_DIR/data/searxng/settings.yml" << 'SEARXNG_EOF'
 use_default_settings: true
 
 server:

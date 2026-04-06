@@ -37,7 +37,7 @@ services:
     container_name: krull-searxng
     restart: unless-stopped
     volumes:
-      - ./searxng:/etc/searxng:rw
+      - ./data/searxng/settings.yml:/etc/searxng/settings.yml:rw
     cap_drop:
       - ALL
     cap_add:
