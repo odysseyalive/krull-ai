@@ -225,7 +225,159 @@ def inject_shell_rules(messages: list) -> list:
     context message — model attention falls off sharply past the first
     few hundred chars of any individual message."""
     messages.insert(0, {"role": "system", "content": KRULL_SHELL_RULES})
+    print("[FILTER] +shell_rules", file=sys.stderr, flush=True)
     return messages
+
+
+def inject_atomic_plan_rubric(messages: list) -> list:
+    """Inject the Atomic Plan Rubric as a dedicated system message at
+    the start. Only fired when the request includes the TaskCreate tool
+    (the signal that the model is in or about to enter planning mode).
+    Same positioning rationale as inject_shell_rules — small standalone
+    callout near the front of the stack, where the small model can
+    actually attend to it."""
+    messages.insert(0, {"role": "system", "content": KRULL_ATOMIC_PLAN_RUBRIC})
+    print("[FILTER] +atomic_plan_rubric", file=sys.stderr, flush=True)
+    return messages
+
+
+def _has_tool_named(tools: list | None, name: str) -> bool:
+    """Check whether a tool list contains a tool with the given name.
+    Handles both Chat Completions ({type, function:{name}}) and Responses
+    API (flat {name}) tool formats."""
+    if not tools:
+        return False
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        if "function" in t and isinstance(t["function"], dict):
+            if t["function"].get("name") == name:
+                return True
+        elif t.get("name") == name:
+            return True
+    return False
+
+
+# Planning-lock helpers (task #15). Input-side enforcement that forces the
+# model to call TaskCreate as its first action on plan-worthy queries.
+# Replaces the failed "instruct the model to plan" approach (#14 alone) with
+# a structural one: remove all non-planning tools from the request, leaving
+# the model with no choice but to plan.
+
+PLANNING_TOOL_NAMES = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
+
+
+_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder>.*?</system-reminder>", re.DOTALL
+)
+
+
+def _strip_system_reminders(content: str) -> str:
+    """Remove all <system-reminder>...</system-reminder> blocks from a
+    user message, leaving only the actual user-typed content.
+
+    Claude Code wraps every user message in one or more <system-reminder>
+    blocks (containing MCP server instructions, hook reminders, project
+    context, etc.). On a fresh /study-prep call, the wrapper blocks add
+    up to ~25 KB while the actual user input is ~30 chars. Stripping
+    them is the only reliable way to find the actual user query."""
+    return _SYSTEM_REMINDER_RE.sub("", content).strip()
+
+
+def _is_plan_worthy_query(messages: list) -> bool:
+    """Heuristic: should the latest user message force planning?
+
+    Strips Claude Code's <system-reminder> wrapper blocks first, then
+    checks whether the actual user input starts with a slash command
+    (e.g. /english-to-cw, /study-prep). These are explicit invocations
+    of multi-step skills/workflows and are exactly the queries the small
+    model fails on without planning. Casual queries that don't start
+    with `/` are left alone so simple requests don't get force-planned.
+    """
+    last_user = None
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last_user = m
+            break
+    if not last_user:
+        return False
+    raw = _content_text(last_user.get("content", ""))
+    user_input = _strip_system_reminders(raw)
+    is_slash = user_input.startswith("/")
+    # Debug: show both the raw size and the stripped user input so we can
+    # verify the strip is working. Remove once the heuristic is dialed in.
+    print(
+        f"[FILTER-DEBUG] plan_worthy check: starts_with_slash={is_slash} "
+        f"raw_len={len(raw)} stripped_len={len(user_input)} "
+        f"stripped={user_input[:200]!r}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return is_slash
+
+
+def _history_has_task_create(messages: list) -> bool:
+    """Has the model already called TaskCreate in this conversation?
+    If yes, planning has already happened and we should not lock the
+    tool list — the model needs the full toolset to execute the plan."""
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        tcs = m.get("tool_calls") or []
+        for tc in tcs:
+            func = tc.get("function") if isinstance(tc, dict) else None
+            if isinstance(func, dict) and func.get("name") == "TaskCreate":
+                return True
+    return False
+
+
+def _narrow_to_planning_tools(tools: list) -> list:
+    """Return a filtered tool list containing only planning tools.
+    Handles both Chat Completions and Responses API tool formats."""
+    out = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        if "function" in t and isinstance(t["function"], dict):
+            name = t["function"].get("name", "")
+        else:
+            name = t.get("name", "")
+        if name in PLANNING_TOOL_NAMES:
+            out.append(t)
+    return out
+
+
+def maybe_lock_to_planning(messages: list, tools: list | None) -> list | None:
+    """If the latest user message is plan-worthy and no prior TaskCreate
+    exists in history, narrow the tools list down to planning tools only.
+    Otherwise return the tools list unchanged. This is the planning-lock
+    forcing function — the model has no choice but to plan first.
+    Returns the (possibly narrowed) tools list."""
+    if not tools:
+        return tools
+    if not _is_plan_worthy_query(messages):
+        return tools
+    if _history_has_task_create(messages):
+        return tools
+    narrowed = _narrow_to_planning_tools(tools)
+    if not narrowed:
+        # No planning tools available — can't lock. Leave tools alone
+        # so the model at least has *something* to call.
+        print(
+            "[FILTER] planning_lock skipped: no planning tools in request",
+            file=sys.stderr,
+            flush=True,
+        )
+        return tools
+    if len(narrowed) < len(tools):
+        print(
+            f"[FILTER] +planning_lock (narrowed {len(tools)}→{len(narrowed)} tools, "
+            f"slash-command query, no prior TaskCreate)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return narrowed
+    return tools
 
 
 def inject_truth_guard(messages: list) -> list:
@@ -241,6 +393,7 @@ def inject_truth_guard(messages: list) -> list:
     project context is positioned after Claude Code's prompt; the
     pre-existing filters stay where they were."""
     messages.insert(0, {"role": "system", "content": TRUTH_GUARD_CONTENT})
+    print("[FILTER] +truth_guard", file=sys.stderr, flush=True)
     return messages
 
 
@@ -260,6 +413,7 @@ def inject_date(messages: list) -> list:
             f"The date is {date_str}."
         ),
     })
+    print("[FILTER] +date", file=sys.stderr, flush=True)
     return messages
 
 
@@ -631,6 +785,92 @@ KRULL_SHELL_RULES = (
     "command strings.\n"
     "[End Krull Shell Rules]"
 )
+
+
+# Atomic Plan Rubric — the first leg of the small-model adapter (task #14).
+#
+# Injected when the request contains the TaskCreate tool, which is the
+# signal that the model is about to (or already is) building a plan.
+# Teaches the model to size individual tasks to a small model's working
+# attention window. Strictly format-based — no skill names, no file paths,
+# no domain-specific examples. Generalizes to any project, any skill.
+#
+# The rubric is the first of three components that work together:
+#   1. This rubric teaches the rules.
+#   2. The TaskCreate validator (#15) enforces them at creation time.
+#   3. The plan-aware compactor (#19) keeps the conversation small enough
+#      across many atomic steps that the model can actually execute the
+#      plan it produced.
+KRULL_ATOMIC_PLAN_RUBRIC = (
+    "[Krull Atomic Plan Rubric — read before creating any TaskCreate items]\n"
+    "\n"
+    "You may be running on a smaller local model whose working attention "
+    "window is much smaller than its nominal context size. To stay within "
+    "it, every plan task you create must satisfy ALL of the following:\n"
+    "\n"
+    "  1. EXACTLY ONE TOOL CALL per task. (Or zero, if the task is pure "
+    "synthesis from facts already stored by earlier tasks.)\n"
+    "  2. TASK OUTPUT ≤ 500 chars, OR summarizable to ≤ 500 chars in one "
+    "short sentence the next task can use as its input.\n"
+    "  3. NO TASK MAY REQUIRE HOLDING A PRIOR TASK'S FULL OUTPUT in "
+    "attention. You may carry forward only the *fact extracted from* the "
+    "prior output, not the output itself.\n"
+    "  4. EACH TASK IS INDEPENDENTLY VERIFIABLE — you can answer 'is this "
+    "task done?' with yes/no by looking at one tool result.\n"
+    "\n"
+    "It is normal and correct for a single user request to expand into "
+    "10–30 atomic tasks. A short plan with 4 large tasks is the wrong "
+    "shape. A long plan with 25 small tasks is the right shape.\n"
+    "\n"
+    "WRONG-SHAPE patterns to avoid:\n"
+    "  ✗ 'Read all <files> and synthesize a result'\n"
+    "  ✗ 'Process the entire input in one step'\n"
+    "  ✗ 'Look everything up and combine'\n"
+    "  ✗ Any task whose subject contains: 'all', 'everything', "
+    "'synthesize', 'combine and produce', 'load and apply'\n"
+    "\n"
+    "RIGHT-SHAPE patterns to model:\n"
+    "  ✓ 'Run <one helper script> with one argument; store the result'\n"
+    "  ✓ 'Read <one reference file>; extract the one relevant pattern'\n"
+    "  ✓ 'Look up <one term> in <one source>; store the single fact'\n"
+    "  ✓ '(no tool call) Combine <list of stored facts> into the answer'\n"
+    "  ✓ '(no tool call) Verify each item in the answer appears in "
+    "stored facts (no fabrication check)'\n"
+    "\n"
+    "CASCADE PRESERVATION (read carefully — silent skips are the worst "
+    "failure mode for an atomic plan):\n"
+    "\n"
+    "  5. EVERY TASK THAT PRODUCES A FACT must explicitly name the fact "
+    "in its description, in the form 'store: <fact_name>'. Pick names "
+    "that the next task can reference unambiguously.\n"
+    "       ✓ 'Run helper.sh with arg X; store: term_translation'\n"
+    "       ✓ 'Read foo.md, extract pattern Y; store: question_pattern'\n"
+    "\n"
+    "  6. EVERY TASK THAT CONSUMES PRIOR FACTS must explicitly name them "
+    "in the form 'uses: <fact_a>, <fact_b>', AND must use TaskCreate's "
+    "addBlockedBy parameter to mark the producing tasks as dependencies. "
+    "This is how the proxy knows which tasks must complete before this "
+    "one can start.\n"
+    "       ✓ '(no tool) Combine the stored values into the answer; "
+    "uses: term_translation, question_pattern; addBlockedBy: [task ids "
+    "that produce those facts]'\n"
+    "\n"
+    "  7. IF A FACT YOU NEED IS MISSING, EMPTY, OR FAILED — DO NOT "
+    "IMPROVISE.\n"
+    "     - Mark your current task with status: blocked\n"
+    "     - Surface the missing dependency by its fact name\n"
+    "     - Stop and wait for the dependency to be reproduced\n"
+    "     Improvising past a missing fact is the worst failure mode for "
+    "an atomic plan: a single silent skip cascades through every "
+    "dependent task and corrupts the final answer without any visible "
+    "signal. 'I don't have the result I need' is always a better answer "
+    "than 'let me make something up.'\n"
+    "\n"
+    "If a task feels too big for the rules above, split it before "
+    "creating it. Long checklists are correct for this model.\n"
+    "[End Krull Atomic Plan Rubric]"
+)
+
 
 # 1% of context window in chars, mirroring SKILL_BUDGET_CONTEXT_PERCENT in
 # tools/SkillTool/prompt.ts:20-41. NUM_CTX is in tokens; multiply by 4 for chars.
@@ -1012,10 +1252,12 @@ def inject_project_context(messages: list) -> list:
     new_skills = pc.skill_names - state["sent_skills"]
     if not state["sent_full"] or new_skills:
         body = pc.full_message(_get_char_budget())
+        mode = "full" if not state["sent_full"] else f"delta(+{len(new_skills)})"
         state["sent_full"] = True
         state["sent_skills"] = set(pc.skill_names)
     else:
         body = pc.static_message()
+        mode = "static"
 
     # Avoid duplicates if our message is already present (e.g., a re-run
     # within the same request). Match on the unique header tag.
@@ -1023,6 +1265,7 @@ def inject_project_context(messages: list) -> list:
         if m.get("role") == "system" and "[Krull Project Context]" in _content_text(m.get("content", "")):
             return messages
 
+    print(f"[FILTER] +project_context ({mode}, {len(body)} chars)", file=sys.stderr, flush=True)
     return _insert_after_system_messages(messages, body)
 
 
@@ -1075,11 +1318,15 @@ def inject_hook_error_hint(messages: list) -> list:
     for m in messages:
         if m.get("role") == "system" and HOOK_ERROR_HINT in _content_text(m.get("content", "")):
             return messages
-    print("[CONTEXT] hook-error hint injected", file=sys.stderr, flush=True)
+    print("[FILTER] +hook_error_hint", file=sys.stderr, flush=True)
     return _insert_after_system_messages(messages, HOOK_ERROR_HINT)
 
 
-async def apply_filters(messages: list, has_tools: bool = False) -> list:
+async def apply_filters(
+    messages: list,
+    has_tools: bool = False,
+    tools: list | None = None,
+) -> list:
     """Run all enabled inlet filters on the messages.
 
     Each pre-existing filter inserts at position 0, so the LAST one to run
@@ -1087,13 +1334,14 @@ async def apply_filters(messages: list, has_tools: bool = False) -> list:
     deliberately so the final layout is:
 
       [0] TOOL_GUIDANCE              ← qwen 9B's tool-use primer (must be 0)
-      [1] KRULL_SHELL_RULES          ← bash quoting pattern, prominent slot
-      [2] DATE
-      [3] TRUTH_GUARD
-      [4] Claude Code's main system prompt
-      [5] KRULL_PROJECT_CONTEXT      ← inserted AFTER Claude Code's prompt
-      [6] HOOK_ERROR_HINT             (conditional)
-      [7..] user/assistant messages
+      [1] KRULL_ATOMIC_PLAN_RUBRIC   ← only when TaskCreate is in tools
+      [2] KRULL_SHELL_RULES          ← bash quoting pattern, prominent slot
+      [3] DATE
+      [4] TRUTH_GUARD
+      [5] Claude Code's main system prompt
+      [6] KRULL_PROJECT_CONTEXT      ← inserted AFTER Claude Code's prompt
+      [7] HOOK_ERROR_HINT             (conditional)
+      [8..] user/assistant messages
 
     We tried moving TOOL_GUIDANCE/DATE/TRUTH_GUARD to insert-after-system as
     well. It broke tool-calling behavior in the qwen 9B — turns out
@@ -1109,16 +1357,28 @@ async def apply_filters(messages: list, has_tools: bool = False) -> list:
     rules were technically present but the model wasn't applying them.
     Pulling them back out into a dedicated front-loaded slot is what
     makes them effective.
+
+    KRULL_ATOMIC_PLAN_RUBRIC fires only when TaskCreate is among the
+    request's tool definitions — that's the signal the model is in (or
+    about to enter) planning mode. The same anchoring logic that applies
+    to TOOL_GUIDANCE and SHELL_RULES applies here: it's a small
+    instructional callout that needs to be at the front of the stack to
+    be effective on a small model. The 'tools' parameter is now threaded
+    through from the request handlers so this filter (and future ones)
+    can inspect what's available.
     """
     if ENABLE_TRUTH_GUARD:
         messages = inject_truth_guard(messages)
     if ENABLE_DATE:
         messages = inject_date(messages)
     messages = inject_shell_rules(messages)
+    if _has_tool_named(tools, "TaskCreate"):
+        messages = inject_atomic_plan_rubric(messages)
     if has_tools:
         # Inject tool usage guidance so the model uses correct parameter names.
         # KEEP THIS AT POSITION 0 — see apply_filters docstring.
         messages.insert(0, {"role": "system", "content": TOOL_GUIDANCE})
+        print("[FILTER] +tool_guidance", file=sys.stderr, flush=True)
     else:
         if ENABLE_WEB_SEARCH:
             messages = await inject_web_search(messages)
@@ -1601,9 +1861,20 @@ async def proxy(request: Request, path: str):
         original_model = resp_data.get("model", "")
         chat_body = responses_request_to_chat(resp_data)
 
+        # Planning-lock: on slash-command queries with no prior TaskCreate,
+        # narrow the tool list to planning tools only so the model has no
+        # choice but to plan first. See task #15 / maybe_lock_to_planning.
+        chat_body["tools"] = maybe_lock_to_planning(
+            chat_body.get("messages", []),
+            chat_body.get("tools"),
+        )
         # Apply inlet filters to the messages
         has_tools = bool(chat_body.get("tools"))
-        chat_body["messages"] = await apply_filters(chat_body["messages"], has_tools=has_tools)
+        chat_body["messages"] = await apply_filters(
+            chat_body["messages"],
+            has_tools=has_tools,
+            tools=chat_body.get("tools"),
+        )
 
         # Convert to Ollama native format (supports options.num_ctx)
         ollama_body = chat_to_ollama_request(chat_body)
@@ -1760,8 +2031,17 @@ async def proxy(request: Request, path: str):
     if path in ("chat/completions", "v1/chat/completions", "api/chat/completions"):
         try:
             data = json.loads(body)
+            # Planning-lock: see /responses path above for rationale.
+            data["tools"] = maybe_lock_to_planning(
+                data.get("messages", []),
+                data.get("tools"),
+            )
             has_tools = bool(data.get("tools"))
-            data["messages"] = await apply_filters(data.get("messages", []), has_tools=has_tools)
+            data["messages"] = await apply_filters(
+                data.get("messages", []),
+                has_tools=has_tools,
+                tools=data.get("tools"),
+            )
             if "tools" in data:
                 data["tools"] = filter_tools(data["tools"])
 
