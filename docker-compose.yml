@@ -55,6 +55,12 @@ services:
     restart: unless-stopped
     ports:
       - "4001:8081"
+    # Mount the user's home read-only at the same path so the proxy can
+    # read .claude/skills directories from any project the user is in.
+    # Absolute paths Claude Code reports (e.g. cwd) resolve identically
+    # inside and outside the container — no path translation needed.
+    volumes:
+      - ${HOME}:${HOME}:ro
     environment:
       - OLLAMA_URL=http://krull-ollama:11434
       - SEARXNG_URL=http://krull-searxng:8080
@@ -68,6 +74,7 @@ services:
       - SEARCH_RESULTS=5
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-131072}
       - CONTEXT_COMPACT_LIMIT=${CONTEXT_COMPACT_LIMIT:-98304}
+      - KRULL_HOST_HOME=${HOME}
       - PORT=8081
 
   litellm:
