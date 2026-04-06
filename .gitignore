@@ -38,3 +38,7 @@ map-viewer/style-*.json
 # Claude Code local config and skills (user-specific)
 .claude/
 CLAUDE.md
+
+# Python bytecode caches
+__pycache__/
+*.pyc
