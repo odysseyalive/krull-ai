@@ -37,6 +37,24 @@ ENABLE_KIWIX = os.environ.get("ENABLE_KIWIX", "true").lower() == "true"
 ENABLE_DATE = os.environ.get("ENABLE_DATE", "true").lower() == "true"
 SEARCH_RESULTS = int(os.environ.get("SEARCH_RESULTS", "5"))
 NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "131072"))
+# Per-tool-result cap for the small-model adapter (task #16). A single
+# Read of a big file can dump tens of thousands of chars into the
+# conversation; after 5-6 such Reads the qwen 9B is past its working
+# attention window and stops emitting tool calls. Capping each result
+# independently keeps context growth linear in number of tool calls
+# rather than in tool result sizes.
+KRULL_TOOL_RESULT_MAX_CHARS = int(
+    os.environ.get("KRULL_TOOL_RESULT_MAX_CHARS", "20000")
+)
+# Stalled-progress threshold (task #23): if the model has made this
+# many consecutive tool-call turns without producing a final text
+# answer, the proxy injects a "stop and summarize" warning. Catches
+# spelunking loops where the model alternates between tools without
+# making progress (e.g. Read random offsets, Grep different patterns,
+# Read more offsets, Grep again, ...).
+KRULL_STALLED_PROGRESS_THRESHOLD = int(
+    os.environ.get("KRULL_STALLED_PROGRESS_THRESHOLD", "12")
+)
 
 STRIP_HEADERS = {"content-length", "content-encoding", "transfer-encoding", "connection"}
 
@@ -337,18 +355,29 @@ def _is_plan_worthy_query(messages: list) -> bool:
     return bool(_COMMAND_NAME_RE.search(user_input))
 
 
-# Slash command protocol directive (task #20). When a slash command is
-# detected, this template is appended to the END of the user message
-# content (the highest-attention position the model reads before
-# choosing its next action). Tells the model to invoke the Skill tool
-# as its first action and follow the skill's procedure rather than
-# bypassing it via Grep/Read shortcuts.
+# Slash command protocol directive (task #20).
+# Appended to the END of the user message content (the highest-attention
+# position the model reads before choosing its next action). Tells the
+# model to invoke the Skill tool as its first action and follow the
+# skill's procedure rather than bypassing it via Grep/Read shortcuts.
 #
-# Empirical: at temperature=0, the qwen 9B deterministically picks Grep
-# over Skill for slash commands because Grep is the most direct path to
-# "find the answer string". This directive is the smallest viable
-# intervention to nudge the deterministic choice toward Skill without
-# removing tools (which we already learned breaks the workflow entirely).
+# REVERTED FROM MOTIVATIONAL VERSION (task #24, see commit history).
+# We tried rewriting this with WHY-this-matters reasoning and concrete
+# causal chains explaining the value of following the skill procedure.
+# The result was strictly worse: where the coercive version made the
+# model thrash through alternatives but eventually find the right path
+# (read workflow, read grammar, find qʰata mayka? in pragmatic.md), the
+# motivational version made the model invoke Skill once, decide it had
+# "satisfied" the directive, and immediately produce a fabricated answer
+# from training (it invented "Sapimih?" with a fake etymology).
+#
+# Lesson: small models like the qwen 9B don't have the meta-cognitive
+# bandwidth to act on motivational reasoning. They follow concrete
+# commands ("MUST do X") much better than abstract appeals to value
+# ("here's why X matters"). The motivation gives them permission to
+# feel done after mechanical compliance instead of a continuing
+# obligation to act. We'll keep coercive directives for small models
+# and not try to extend motivational language to the other filters.
 SLASH_COMMAND_PROTOCOL_TEMPLATE = (
     "\n\n[Krull Slash Command Protocol]\n"
     "You received a /{skill_name} slash command. Your FIRST tool call "
@@ -466,6 +495,363 @@ def _narrow_to_planning_tools(tools: list) -> list:
         if name in PLANNING_TOOL_NAMES:
             out.append(t)
     return out
+
+
+# Loop detection + adaptive temperature (task #21).
+#
+# At temperature=0 the small model is deterministic, which is great for
+# /english-to-cw but disastrous when the model picks a "shortest path"
+# strategy that happens to loop. Observed failure: model brute-forced
+# wol.jw.org publication IDs by incrementing the last digit, calling
+# Bash 15+ times in a row at temp=0. The deterministic next action was
+# always "increment by 1, try again."
+#
+# Fix: detect tool-call loops, inject a system reminder, AND elevate
+# temperature for the next request based on how stuck the loop is.
+# Higher temperature gives the model variance to break out. Once the
+# model picks a different tool the loop counter resets and temp returns
+# to 0. Generic: works for any tool, any skill, any project.
+
+LOOP_DETECTION_THRESHOLD = 5  # consecutive same-tool calls = loop
+
+
+def detect_tool_loop(messages: list) -> tuple[str, int] | None:
+    """Scan the assistant tool calls in the message history. If the most
+    recent N (>= LOOP_DETECTION_THRESHOLD) all use the same tool name,
+    return (tool_name, count). Otherwise return None.
+
+    Tool name only — we don't compare arguments. A model legitimately
+    calling Read on 10 different files would still be flagged, but
+    that's the right call: the rubric tells the model to do small
+    discrete tasks, and 10 sequential Reads is exactly the kind of
+    pattern that should make it pause and consider whether a different
+    tool (Glob, Grep) would be more efficient.
+    """
+    tool_names: list[str] = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        tcs = m.get("tool_calls") or []
+        for tc in tcs:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function") if isinstance(tc.get("function"), dict) else None
+            if not func:
+                continue
+            name = func.get("name", "")
+            if name:
+                tool_names.append(name)
+
+    if len(tool_names) < LOOP_DETECTION_THRESHOLD:
+        return None
+
+    # Walk backward from the end and count consecutive matches of the
+    # most recent tool name.
+    last = tool_names[-1]
+    count = 0
+    for name in reversed(tool_names):
+        if name == last:
+            count += 1
+        else:
+            break
+    if count >= LOOP_DETECTION_THRESHOLD:
+        return (last, count)
+    return None
+
+
+LOOP_BREAK_HINT_TEMPLATE = (
+    "[Krull Loop Break]\n"
+    "You have called the {tool_name} tool {count} times in a row. "
+    "This pattern is not making progress. STOP this approach and "
+    "reconsider:\n"
+    "  - What information do you ACTUALLY need to answer the user?\n"
+    "  - Is there a DIFFERENT tool that could find it more directly?\n"
+    "  - Are you brute-forcing something that should be looked up?\n"
+    "  - Should you stop and ask the user for guidance?\n"
+    "\n"
+    "Do NOT call {tool_name} again on your next turn unless you are "
+    "calling it with a fundamentally different intent. Try a different "
+    "tool, a different approach, or honestly tell the user what you "
+    "tried and why it isn't working.\n"
+    "[End Krull Loop Break]"
+)
+
+
+def inject_loop_break(messages: list) -> list:
+    """If a tool-call loop is detected, inject a system reminder telling
+    the model to stop and reconsider. Position: after Claude Code's
+    system prompt (same pattern as project context and hook error hint).
+    Idempotent — won't double-inject if the hint is already present."""
+    loop = detect_tool_loop(messages)
+    if loop is None:
+        return messages
+    tool_name, count = loop
+    # Idempotent: don't stack multiple loop break hints
+    for m in messages:
+        if m.get("role") == "system" and "[Krull Loop Break]" in _content_text(m.get("content", "")):
+            return messages
+    hint = LOOP_BREAK_HINT_TEMPLATE.format(tool_name=tool_name, count=count)
+    print(
+        f"[FILTER] +loop_break ({tool_name} × {count} → injecting reminder)",
+        file=sys.stderr,
+        flush=True,
+    )
+    return _insert_after_system_messages(messages, hint)
+
+
+def compute_session_temperature(messages: list) -> float:
+    """Pick the right sampling temperature for this request based on the
+    conversation state. Default 0.0 (deterministic). Two triggers for
+    escalation:
+
+      1. Tool-call loop (same tool N times in a row) — strongest signal
+         that the model is making the same mistake repeatedly.
+      2. Stalled progress (N consecutive tool turns without a text
+         answer) — catches the spelunking case where the model uses
+         varied tools but still isn't converging.
+
+    The strongest applicable escalation wins. Returns 0.0 for normal
+    operation. Returns > 0 only when intervention is needed. The
+    request handler passes the result through to Ollama via
+    chat_body['temperature']."""
+    loop = detect_tool_loop(messages)
+    if loop is not None:
+        _tool, count = loop
+        if count >= 13:
+            return 0.6
+        if count >= 8:
+            return 0.4
+        return 0.2
+
+    stalled = count_consecutive_tool_turns(messages)
+    if stalled >= KRULL_STALLED_PROGRESS_THRESHOLD:
+        # Escalate proportionally to how stuck the workflow is
+        if stalled >= KRULL_STALLED_PROGRESS_THRESHOLD + 6:  # ≥18
+            return 0.6
+        if stalled >= KRULL_STALLED_PROGRESS_THRESHOLD + 3:  # ≥15
+            return 0.4
+        return 0.2  # 12-14 stalled turns — light nudge
+
+    return 0.0
+
+
+# Data starvation detection (task #22). When the model's recent tool
+# calls have all failed/errored, the small model tends to give up and
+# produce a confident-sounding answer from training instead of refusing
+# honestly. Truth Guard tells it not to fabricate but is too abstract to
+# act on. We need a CONCRETE, IMMEDIATE warning at the moment the
+# starvation state is detected: "you tried X, Y, Z and they all failed,
+# you have no data, refuse honestly."
+#
+# Detection is heuristic — we look at the most recent N tool results
+# and check each against a set of failure patterns (timeouts, hook
+# errors, HTTP errors, empty results, invalid params, etc.). If the
+# failure rate is high enough, we inject the warning.
+
+# Patterns that indicate a tool result is a failure rather than useful
+# data. Conservative: we'd rather miss a real failure than false-alarm
+# on a legitimate result.
+_FAILURE_PATTERNS = [
+    re.compile(r"PreToolUse:.*hook error", re.IGNORECASE),
+    re.compile(r"timeout of \d+ms exceeded", re.IGNORECASE),
+    re.compile(r"\btimed out\b", re.IGNORECASE),
+    re.compile(r"\bInvalid tool parameters\b", re.IGNORECASE),
+    re.compile(r"\bPage Not Found\b", re.IGNORECASE),
+    re.compile(r"<tool_use_error>", re.IGNORECASE),
+    re.compile(r"^Error:", re.MULTILINE),
+    re.compile(r"\bFile does not exist\b", re.IGNORECASE),
+    re.compile(r"\bNo such file or directory\b", re.IGNORECASE),
+    re.compile(r"^Exit code [1-9]", re.MULTILINE),  # non-zero exit
+]
+
+
+def _is_failure_result(content: str) -> bool:
+    """Heuristic: does this tool result look like a failure?
+
+    Two ways to fail: known failure patterns (regex match), or content
+    is suspiciously short (< 10 chars after stripping — probably an
+    empty result or a one-word error). Conservative thresholds —
+    we'd rather miss a real failure than false-alarm legitimate output.
+    """
+    if not isinstance(content, str):
+        return False
+    stripped = content.strip()
+    if len(stripped) < 10:
+        return True
+    for pat in _FAILURE_PATTERNS:
+        if pat.search(stripped):
+            return True
+    return False
+
+
+def _count_recent_tool_failures(messages: list, n: int = 5) -> tuple[int, int, list[str]]:
+    """Walk the messages from the end, find the last N tool results,
+    and count how many look like failures. Returns (failures, examined,
+    failure_summaries)."""
+    tool_results = []
+    for m in reversed(messages):
+        if m.get("role") == "tool":
+            tool_results.append(m)
+            if len(tool_results) >= n:
+                break
+
+    failures = 0
+    summaries: list[str] = []
+    # We walked backward; reverse so summaries are in chronological order
+    for m in reversed(tool_results):
+        content = _content_text(m.get("content", ""))
+        if _is_failure_result(content):
+            failures += 1
+            snippet = content.strip()[:90].replace("\n", " ")
+            summaries.append(snippet)
+    return (failures, len(tool_results), summaries)
+
+
+DATA_STARVATION_HINT_TEMPLATE = (
+    "[Krull Data Starvation Warning]\n"
+    "Your last {failures} of {total} tool calls have failed or returned "
+    "no useful data:\n"
+    "{failure_summary}\n"
+    "\n"
+    "You DO NOT have the information needed to produce a verified "
+    "answer to the user's question. You MUST NOT produce a final "
+    "answer from training knowledge. Doing so creates plausible-"
+    "sounding but potentially wrong content that the user cannot "
+    "easily verify — that is the worst possible failure mode for an "
+    "assistant claiming to be grounded in real sources.\n"
+    "\n"
+    "Instead, on your next turn, do ONE of the following:\n"
+    "  1. Tell the user honestly: 'I tried [list of attempts] and "
+    "they failed because [reasons]. I do not have the data to answer "
+    "this confidently. Here is what I know I CANNOT verify: [...]'\n"
+    "  2. Ask the user for guidance on a different approach\n"
+    "  3. Try a fundamentally DIFFERENT tool you have not yet tried\n"
+    "\n"
+    "Do NOT invent details, scriptures, citations, definitions, "
+    "names, dates, or facts. An honest 'I could not retrieve this' "
+    "is always better than a confident wrong answer.\n"
+    "[End Krull Data Starvation Warning]"
+)
+
+
+def inject_data_starvation_warning(messages: list) -> list:
+    """If the model's recent tool calls are mostly failures, inject a
+    concrete warning telling it to refuse honestly instead of inventing.
+    Position: after Claude Code's system prompt (same pattern as the
+    other 'detect bad state and warn' filters). Idempotent."""
+    failures, total, summaries = _count_recent_tool_failures(messages, n=5)
+    if total < 3:
+        # Not enough recent tool results to make a confident judgment
+        return messages
+    if failures < total * 0.6:
+        # Less than 60% failure rate — not a starvation state
+        return messages
+
+    # Idempotent — don't stack warnings if one is already in the messages
+    for m in messages:
+        if m.get("role") == "system" and "[Krull Data Starvation Warning]" in _content_text(m.get("content", "")):
+            return messages
+
+    summary_lines = "\n".join(f"  - {s}" for s in summaries)
+    hint = DATA_STARVATION_HINT_TEMPLATE.format(
+        failures=failures,
+        total=total,
+        failure_summary=summary_lines,
+    )
+    print(
+        f"[FILTER] +data_starvation_warning ({failures}/{total} recent tool calls failed)",
+        file=sys.stderr,
+        flush=True,
+    )
+    return _insert_after_system_messages(messages, hint)
+
+
+# Stalled progress detection (task #23). The loop detector catches
+# "same tool N times in a row" but misses spelunking loops where the
+# model alternates between tools (Read, Grep, Read, Grep, Read, ...)
+# at random offsets/patterns hoping to find content that isn't where
+# it's looking. The data starvation detector misses it too because
+# the tool results are technically "successful" — Reads return real
+# content, Greps return real matches, just nothing relevant to the
+# task. The model keeps grinding because every individual call looks
+# productive even though the workflow as a whole is stuck.
+#
+# Detection: count consecutive assistant tool-call turns since the
+# last "pure text" assistant response. If too many in a row, the
+# model is exploring without converging and we intervene.
+
+
+def count_consecutive_tool_turns(messages: list) -> int:
+    """Count how many recent assistant messages were tool-call turns
+    (had tool_calls). A 'pure text' assistant response (no tool_calls,
+    significant content) resets the counter — that's the model
+    actually answering the user. Walks backward from the end."""
+    count = 0
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        tcs = m.get("tool_calls") or []
+        content_text = _content_text(m.get("content", "") or "").strip()
+        if tcs:
+            count += 1
+            continue
+        # Pure assistant text response (no tool_calls). If it's
+        # substantive (>100 chars), it's a real answer — reset.
+        # Short content with no tool calls is usually a placeholder
+        # or "okay, I'll do that next" filler — keep counting.
+        if len(content_text) > 100:
+            break
+    return count
+
+
+STALLED_PROGRESS_HINT_TEMPLATE = (
+    "[Krull Stalled Progress Warning]\n"
+    "You have made {count} consecutive tool calls without producing "
+    "a final answer to the user. This pattern means you are stuck in "
+    "an exploration loop — tools are running but the workflow is not "
+    "converging on an answer.\n"
+    "\n"
+    "STOP exploring. Whatever search/lookup strategy you have been "
+    "using is not working. Repeating it with different parameters "
+    "(different file offsets, different grep patterns, different URLs) "
+    "will not change the result.\n"
+    "\n"
+    "On your next turn, do ONE of the following:\n"
+    "  1. SUMMARIZE what you know AND what you do not know. Tell the "
+    "user honestly what you tried, what worked, and what failed.\n"
+    "  2. Give the best honest answer you can with the information "
+    "you have already gathered. Cite the specific tool results you "
+    "are drawing from.\n"
+    "  3. Ask the user for guidance on a different approach.\n"
+    "\n"
+    "Do NOT call another tool unless you have a fundamentally different "
+    "strategy than what you have been doing. Do NOT make up details to "
+    "fill gaps in what you found. An honest 'I tried X, Y, Z and could "
+    "not find this' is always better than a confident wrong answer.\n"
+    "[End Krull Stalled Progress Warning]"
+)
+
+
+def inject_stalled_progress_warning(messages: list) -> list:
+    """If the model has made KRULL_STALLED_PROGRESS_THRESHOLD or more
+    consecutive tool-call turns without a substantive text response,
+    inject a warning telling it to stop exploring and summarize."""
+    count = count_consecutive_tool_turns(messages)
+    if count < KRULL_STALLED_PROGRESS_THRESHOLD:
+        return messages
+
+    # Idempotent
+    for m in messages:
+        if m.get("role") == "system" and "[Krull Stalled Progress Warning]" in _content_text(m.get("content", "")):
+            return messages
+
+    hint = STALLED_PROGRESS_HINT_TEMPLATE.format(count=count)
+    print(
+        f"[FILTER] +stalled_progress_warning ({count} consecutive tool turns without text answer)",
+        file=sys.stderr,
+        flush=True,
+    )
+    return _insert_after_system_messages(messages, hint)
 
 
 def maybe_lock_to_planning(messages: list, tools: list | None) -> list | None:
@@ -784,6 +1170,78 @@ async def inject_map_search(messages: list) -> list:
         print(f"[PROXY] Map search error: {e}", file=sys.stderr, flush=True)
 
     return messages
+
+
+# Marker text used to detect already-truncated tool results so we don't
+# re-truncate them on subsequent passes. Must match the marker emitted
+# by truncate_large_tool_results below.
+_TRUNCATION_MARKER = "[... truncated by Krull proxy"
+
+
+def truncate_large_tool_results(messages: list) -> list:
+    """Cap each individual tool result at KRULL_TOOL_RESULT_MAX_CHARS.
+
+    Small models like the qwen 9B have a much smaller effective working
+    attention window than their nominal context size. A single Read of
+    a big file (e.g., a multi-megabyte cache, a long transcript, the
+    entire dictionary) dumps tens of thousands of chars into the
+    conversation, and after 5-6 such Reads the model is past its
+    working window and stops emitting useful tool calls. Capping each
+    result independently keeps context growth linear in *number* of
+    tool calls rather than in tool result sizes.
+
+    The model can re-Read specific lines via offset/limit if it needs
+    content beyond the cap — the truncation marker tells it how.
+
+    General-purpose: works for any tool (Read, Bash, Grep, etc.), any
+    skill, any project. No skill-specific logic.
+
+    Idempotent: tool results that already contain the truncation marker
+    are passed through unchanged.
+    """
+    new_messages = []
+    truncated = 0
+    saved_chars = 0
+    cap = KRULL_TOOL_RESULT_MAX_CHARS
+    for m in messages:
+        if m.get("role") != "tool":
+            new_messages.append(m)
+            continue
+        content = m.get("content", "")
+        # Tool results are usually plain strings; bail on other shapes
+        # rather than guessing how to truncate them.
+        if not isinstance(content, str):
+            new_messages.append(m)
+            continue
+        if len(content) <= cap:
+            new_messages.append(m)
+            continue
+        if _TRUNCATION_MARKER in content:
+            # Already truncated by an earlier pass through this filter
+            new_messages.append(m)
+            continue
+        kept = content[:cap]
+        dropped = len(content) - cap
+        marker = (
+            f"\n\n{_TRUNCATION_MARKER}: {dropped} chars dropped to keep "
+            f"the conversation small enough for the model's working "
+            f"window. If you need a different part of this content, "
+            f"re-Read the source with offset/limit parameters to fetch "
+            f"specific lines.]"
+        )
+        new_msg = dict(m)
+        new_msg["content"] = kept + marker
+        new_messages.append(new_msg)
+        truncated += 1
+        saved_chars += dropped
+    if truncated > 0:
+        print(
+            f"[FILTER] +tool_result_truncate ({truncated} results capped, "
+            f"{saved_chars} chars saved, cap={cap})",
+            file=sys.stderr,
+            flush=True,
+        )
+    return new_messages
 
 
 def compact_context(messages: list) -> list:
@@ -1510,6 +1968,10 @@ async def apply_filters(
     messages = inject_project_context(messages)
     messages = inject_slash_command_protocol(messages)
     messages = inject_hook_error_hint(messages)
+    messages = inject_loop_break(messages)
+    messages = inject_data_starvation_warning(messages)
+    messages = inject_stalled_progress_warning(messages)
+    messages = truncate_large_tool_results(messages)
     messages = compact_context(messages)
     return messages
 
@@ -2017,6 +2479,19 @@ async def proxy(request: Request, path: str):
             tools=chat_body.get("tools"),
         )
 
+        # Adaptive temperature: if the model is in a tool-call loop,
+        # elevate temperature to give it variance to break out. Returns
+        # 0.0 for normal operation; chat_to_ollama_request only honors
+        # the override when it's > 0.
+        elevated_temp = compute_session_temperature(chat_body["messages"])
+        if elevated_temp > 0:
+            chat_body["temperature"] = elevated_temp
+            print(
+                f"[FILTER] +temp_escalation (loop detected, temp={elevated_temp})",
+                file=sys.stderr,
+                flush=True,
+            )
+
         # Convert to Ollama native format (supports options.num_ctx)
         ollama_body = chat_to_ollama_request(chat_body)
         upstream = f"{OLLAMA_URL}/api/chat"
@@ -2188,6 +2663,16 @@ async def proxy(request: Request, path: str):
             )
             if "tools" in data:
                 data["tools"] = filter_tools(data["tools"])
+
+            # Adaptive temperature: see /responses path for rationale.
+            elevated_temp = compute_session_temperature(data["messages"])
+            if elevated_temp > 0:
+                data["temperature"] = elevated_temp
+                print(
+                    f"[FILTER] +temp_escalation (loop detected, temp={elevated_temp})",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
             ollama_body = chat_to_ollama_request(data)
             upstream = f"{OLLAMA_URL}/api/chat"

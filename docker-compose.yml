@@ -59,8 +59,14 @@ services:
     # read .claude/skills directories from any project the user is in.
     # Absolute paths Claude Code reports (e.g. cwd) resolve identically
     # inside and outside the container — no path translation needed.
+    #
+    # Also bind-mount ./proxy onto /app so host edits to sse_patch.py
+    # take effect inside the container without needing a full image
+    # rebuild. The Dockerfile starts uvicorn with --reload so the
+    # process auto-restarts when sse_patch.py changes.
     volumes:
       - ${HOME}:${HOME}:ro
+      - ./proxy:/app
     environment:
       - OLLAMA_URL=http://krull-ollama:11434
       - SEARXNG_URL=http://krull-searxng:8080
