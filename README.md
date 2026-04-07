@@ -79,9 +79,21 @@ Each door opens in a new tab so the homepage stays put.
 
 ### First things to do
 
-1. **Pick a model.** Open the AI Chat door and use the model selector. If nothing's there, run `./krull pull-model frob/qwen3.5-instruct:9b` (or see [TECHNICAL.md](TECHNICAL.md#pulling-models) for the full model guide).
+1. **Pick a model.** Open the homepage's **Settings** page. The "Pick a brain" panel at the top has three recommended models — pick the one that fits your GPU (see the table below). Click "Pull & activate" or "Set as active". Krull pulls the model, wires it into the LiteLLM gateway, and restarts the gateway for you.
 2. **Install some knowledge.** From the homepage, click **Library of Alexandria**. Browse the Knowledge / Wikipedia / Maps tabs. Click Install on anything that looks useful. The download bar fills, the affected service auto-restarts, and the new content shows up in the corresponding door.
-3. **Check your settings.** From the homepage, click **Settings**. Edit any environment variable inline; click Save; click "Restart affected services" if needed.
+3. **Check your settings.** Below the model picker on the Settings page, every environment variable is editable inline. Click Save; click "Restart affected services" if needed.
+
+### Recommended models
+
+All three are the same Qwen 3.5 Instruct model at different sizes — same architecture, same tool-calling behavior, three VRAM tiers. The "Pick a brain" panel on the Settings page lets you pull and activate any of them with one click.
+
+| Model | VRAM | Best for |
+|---|---|---|
+| `frob/qwen3.5-instruct:4b` | ~3 GB | Laptops, integrated GPUs, quick prototyping |
+| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended default.** Daily Claude Code work on a 6–12 GB GPU |
+| `frob/qwen3.5-instruct:27b` | ~16 GB | 16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX) |
+
+> **Why Qwen 3.5 Instruct?** It produces proper Anthropic-style `tool_use` blocks, which Claude Code requires. The `frob/` variant has thinking mode disabled — same weights, same quality, but faster responses without `<think>` blocks. Other models can be installed via `./krull pull-model <name>` and selected by editing `OLLAMA_MODEL` in the Settings page; see [TECHNICAL.md](TECHNICAL.md#pulling-models) for details.
 
 ---
 

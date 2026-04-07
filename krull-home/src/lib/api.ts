@@ -125,6 +125,46 @@ export async function deletePackage(
   if (!res.ok) throw new Error(`delete failed: ${await res.text()}`);
 }
 
+export interface RecommendedModel {
+  key: string;
+  label: string;
+  vram: string;
+  description: string;
+  bestFor: string;
+  installed: boolean;
+  active: boolean;
+}
+export interface ModelsPayload {
+  active: string;
+  recommended: RecommendedModel[];
+  other: string[];
+}
+
+export async function fetchModels(): Promise<ModelsPayload> {
+  const res = await fetch("/api/models");
+  if (!res.ok) throw new Error(`/api/models -> ${res.status}`);
+  return (await res.json()) as ModelsPayload;
+}
+
+export async function pullModel(key: string): Promise<{ jobId: string }> {
+  const res = await fetch("/api/models/install", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) throw new Error(`pull failed: ${await res.text()}`);
+  return (await res.json()) as { jobId: string };
+}
+
+export async function selectModel(key: string): Promise<void> {
+  const res = await fetch("/api/models/select", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) throw new Error(`select failed: ${await res.text()}`);
+}
+
 export function streamJob(jobId: string, onEvent: (ev: JobEvent) => void): () => void {
   const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
   es.onmessage = (msg) => {

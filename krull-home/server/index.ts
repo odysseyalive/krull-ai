@@ -6,6 +6,7 @@ import servicesRouter from "./routes/services.js";
 import envRouter from "./routes/env.js";
 import systemRouter from "./routes/system.js";
 import libraryRouter from "./routes/library.js";
+import modelsRouter from "./routes/models.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +25,7 @@ app.use("/api", servicesRouter);
 app.use("/api", envRouter);
 app.use("/api", systemRouter);
 app.use("/api", libraryRouter);
+app.use("/api", modelsRouter);
 
 // Serve the Vite-built frontend.
 // In dev (tsx watch), __dirname is .../server, so dist sits next to it.

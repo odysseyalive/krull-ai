@@ -74,13 +74,15 @@ Individual scripts in `scripts/` still work directly if needed. The Library of A
 
 ## Pulling models
 
-You need at least one LLM. Pick based on your GPU memory:
+The fastest way to pull and activate a recommended model is the **"Pick a brain"** panel on the Settings page (`http://localhost:8000/settings`). It shows the three Krull-recommended Qwen variants as cards; clicking one pulls it (if needed) and atomically: writes `OLLAMA_MODEL` to `.env`, patches every `model: openai/...` line in `litellm/config.yaml`, and restarts `krull-litellm`. No manual config edits required.
+
+The CLI does the same work for any model:
 
 | Model | VRAM | Good for |
 |---|---|---|
-| `frob/qwen3.5-instruct:4b` | ~3 GB | Quick responses, lighter hardware |
-| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended** — coding + tool calling |
-| `frob/qwen3.5-instruct:27b` | ~16 GB | Best quality (needs beefy GPU) |
+| `frob/qwen3.5-instruct:4b` | ~3 GB | Laptops, integrated GPUs, quick prototyping |
+| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended default** — daily Claude Code work on a 6–12 GB GPU |
+| `frob/qwen3.5-instruct:27b` | ~16 GB | 16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX) |
 
 ```bash
 ./krull pull-model frob/qwen3.5-instruct:9b

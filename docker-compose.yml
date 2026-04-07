@@ -135,6 +135,18 @@ services:
     environment:
       - COUNTRY_CODE=${PHOTON_COUNTRY_CODE:-}
 
+  kiwix-front:
+    image: nginx:alpine
+    container_name: krull-kiwix-front
+    restart: unless-stopped
+    depends_on:
+      - kiwix
+    ports:
+      - "8090:80"
+    volumes:
+      - ./kiwix-front/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./kiwix-front/favicon:/usr/share/nginx/favicon:ro
+
   krull-home:
     build: ./krull-home
     container_name: krull-home
@@ -154,8 +166,10 @@ services:
     image: ghcr.io/kiwix/kiwix-serve:latest
     container_name: krull-kiwix
     restart: unless-stopped
-    ports:
-      - "8090:8080"
+    # No external port — fronted by krull-kiwix-front on 8090, which proxies
+    # everything through and overrides /skin/favicon/* with the Krull mark.
+    expose:
+      - "8080"
     volumes:
       - ./zim:/data:ro
     entrypoint: ["/bin/sh", "-c"]

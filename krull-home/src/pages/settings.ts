@@ -1,6 +1,7 @@
 import { Header } from "../components/Header";
 import { Nav } from "../components/Nav";
 import { toast } from "../components/Toast";
+import { ModelPicker } from "../components/ModelPicker";
 import { fetchEnv, restartContainer, saveEnv, type EnvField, type EnvPayload } from "../lib/api";
 
 export async function SettingsPage(): Promise<HTMLElement> {
@@ -16,6 +17,29 @@ export async function SettingsPage(): Promise<HTMLElement> {
       subtitle:
         "Edit environment variables and restart services without touching a terminal.",
     }),
+  );
+
+  // Model picker sits above the form — picking a model is the most
+  // common reason someone visits this page.
+  const modelSection = document.createElement("section");
+  modelSection.className = "section section--models";
+  modelSection.append(ModelPicker());
+  root.append(modelSection);
+
+  // When the picker activates a new model it dispatches this event so the
+  // OLLAMA_MODEL form input below stays in sync. Otherwise saving the env
+  // form afterwards would silently overwrite the picker's change.
+  const onModelChanged = (e: Event) => {
+    const detail = (e as CustomEvent<{ key: string }>).detail;
+    const input = inputs.get("OLLAMA_MODEL");
+    if (input && detail?.key) input.value = detail.key;
+  };
+  window.addEventListener("krull:model-changed", onModelChanged);
+  // Best-effort cleanup when the page is replaced.
+  window.addEventListener(
+    "popstate",
+    () => window.removeEventListener("krull:model-changed", onModelChanged),
+    { once: true },
   );
 
   const section = document.createElement("section");
