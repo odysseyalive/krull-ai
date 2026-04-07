@@ -68,3 +68,49 @@ export async function listInstalledModels(): Promise<string[]> {
     return [];
   }
 }
+
+export interface ModelTuningParams {
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  presence_penalty?: number;
+}
+
+/**
+ * Re-tune an already-local model in place by re-running ollama create
+ * against itself with new sampling parameters baked into the manifest.
+ * Pure local operation — does NOT touch the registry, so it works
+ * fully offline. Typically completes in well under a second per model.
+ */
+export async function retuneModel(
+  modelKey: string,
+  params: ModelTuningParams,
+): Promise<void> {
+  const body = {
+    model: modelKey,
+    from: modelKey,
+    parameters: params,
+  };
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 30000);
+  const res = await fetch(`${OLLAMA_URL}/api/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: ctrl.signal,
+  });
+  clearTimeout(timeout);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ollama create failed (${res.status}): ${text.slice(-200)}`);
+  }
+  // The endpoint streams NDJSON status events. Drain it so we don't
+  // leave the socket half-open.
+  if (res.body) {
+    const reader = res.body.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  }
+}

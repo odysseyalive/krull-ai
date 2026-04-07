@@ -132,3 +132,20 @@ export function affectedContainersFor(changedKeys: string[]): string[] {
   }
   return [...out];
 }
+
+/**
+ * Sampling parameters that ollama bakes into a model at create-time
+ * via the Modelfile. Changing any of these in .env requires re-tuning
+ * every installed model — they aren't read per-request, so just
+ * writing the new value to .env has no effect on what ollama serves.
+ */
+export const MODEL_TUNING_KEYS = [
+  "OLLAMA_TEMPERATURE",
+  "OLLAMA_TOP_P",
+  "OLLAMA_TOP_K",
+  "OLLAMA_PRESENCE_PENALTY",
+] as const;
+
+export function changedKeysRequireRetune(changedKeys: string[]): boolean {
+  return changedKeys.some((k) => (MODEL_TUNING_KEYS as readonly string[]).includes(k));
+}

@@ -1,7 +1,13 @@
 import { Router } from "express";
 import path from "node:path";
-import { listEntries, readEnvFile, setValue, writeEnvFile } from "../lib/envFile.js";
-import { ENV_SCHEMA, affectedContainersFor } from "../lib/envSchema.js";
+import { listEntries, readEnvFile, setValue, writeEnvFile, getValue } from "../lib/envFile.js";
+import {
+  ENV_SCHEMA,
+  affectedContainersFor,
+  changedKeysRequireRetune,
+} from "../lib/envSchema.js";
+import { createJob } from "../lib/jobs.js";
+import { startModelRetune } from "../lib/modelInstaller.js";
 
 const router = Router();
 
@@ -45,11 +51,42 @@ router.put("/env", async (req, res) => {
     }
   }
   await writeEnvFile(ENV_PATH, parsed);
+
+  // Sampling parameters (temperature, top_p, top_k, presence_penalty)
+  // are baked into each Ollama model at create-time, NOT read at
+  // request-time, so just writing them to .env has no runtime effect.
+  // When any of those keys changed, kick off a job that calls
+  // ollama's local /api/create endpoint for every installed model
+  // with the new parameters. The frontend can stream this job to
+  // show progress.
+  let retuneJobId: string | undefined;
+  if (changedKeysRequireRetune(changed)) {
+    const fresh = await readEnvFile(ENV_PATH);
+    const params = {
+      temperature: numberOrUndefined(getValue(fresh, "OLLAMA_TEMPERATURE")),
+      top_p: numberOrUndefined(getValue(fresh, "OLLAMA_TOP_P")),
+      top_k: numberOrUndefined(getValue(fresh, "OLLAMA_TOP_K")),
+      presence_penalty: numberOrUndefined(getValue(fresh, "OLLAMA_PRESENCE_PENALTY")),
+    };
+    const job = createJob("model-retune", "all-installed");
+    retuneJobId = job.id;
+    // Fire-and-forget: the job streams its own progress through the
+    // events emitter; the frontend subscribes via /api/jobs/:id/stream.
+    void startModelRetune(job, params);
+  }
+
   res.json({
     ok: true,
     changed,
     affects: affectedContainersFor(changed),
+    retuneJobId,
   });
 });
+
+function numberOrUndefined(s: string | undefined): number | undefined {
+  if (s === undefined || s === "") return undefined;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 export default router;

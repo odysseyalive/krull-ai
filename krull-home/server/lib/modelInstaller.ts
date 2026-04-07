@@ -10,6 +10,7 @@ import path from "node:path";
 import { restartContainer, isRestartable } from "./docker.js";
 import { type Job, pushEvent } from "./jobs.js";
 import { readEnvFile, setValue, writeEnvFile } from "./envFile.js";
+import { listInstalledModels, retuneModel, type ModelTuningParams } from "./models.js";
 
 const REPO = process.env.KRULL_REPO ?? "/workspace";
 
@@ -56,6 +57,64 @@ export function startModelPull(job: Job, modelKey: string): void {
       error: `spawn failed: ${err.message}`,
       timestamp: Date.now(),
     });
+  });
+}
+
+/**
+ * Re-tune every installed model with new sampling parameters. Runs the
+ * ollama create call sequentially per model and reports per-model
+ * progress through the job's event stream. Fully offline — uses
+ * Ollama's local /api/create endpoint, not pull-model.sh.
+ */
+export async function startModelRetune(
+  job: Job,
+  params: ModelTuningParams,
+): Promise<void> {
+  const installed = await listInstalledModels();
+  if (installed.length === 0) {
+    pushEvent(job, {
+      phase: "done",
+      message: "No installed models to re-tune.",
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
+  pushEvent(job, {
+    phase: "downloading",
+    percent: 0,
+    bytes: 0,
+    total: installed.length,
+    message: `Re-tuning ${installed.length} model${installed.length === 1 ? "" : "s"}…`,
+    timestamp: Date.now(),
+  });
+
+  for (let i = 0; i < installed.length; i++) {
+    const name = installed[i];
+    pushEvent(job, {
+      phase: "downloading",
+      percent: Math.round((i / installed.length) * 100),
+      bytes: i,
+      total: installed.length,
+      message: `Re-tuning ${name}…`,
+      timestamp: Date.now(),
+    });
+    try {
+      await retuneModel(name, params);
+    } catch (err) {
+      pushEvent(job, {
+        phase: "failed",
+        error: `Re-tune of ${name} failed: ${(err as Error).message}`,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+  }
+
+  pushEvent(job, {
+    phase: "done",
+    message: `Re-tuned ${installed.length} model${installed.length === 1 ? "" : "s"}.`,
+    timestamp: Date.now(),
   });
 }
 

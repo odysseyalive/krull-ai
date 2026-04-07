@@ -1,3 +1,5 @@
+import { UpdateButton } from "./UpdateButton";
+
 /** Persistent top navigation. Sticky, glassy. */
 const LINKS: Array<{ href: string; label: string }> = [
   { href: "/", label: "Home" },
@@ -24,8 +26,8 @@ export function Nav(currentPath: string): HTMLElement {
   label.textContent = "Krull";
   brand.append(mark, label);
 
-  const links = document.createElement("ul");
-  links.className = "krull-nav__links";
+  const center = document.createElement("ul");
+  center.className = "krull-nav__links";
   for (const link of LINKS) {
     const li = document.createElement("li");
     const a = document.createElement("a");
@@ -34,10 +36,15 @@ export function Nav(currentPath: string): HTMLElement {
     a.className = "krull-nav__link";
     if (link.href === currentPath) a.setAttribute("aria-current", "page");
     li.append(a);
-    links.append(li);
+    center.append(li);
   }
 
-  inner.append(brand, links);
+  // Right-side actions: update button + (room for future status indicators).
+  const actions = document.createElement("div");
+  actions.className = "krull-nav__actions";
+  actions.append(UpdateButton());
+
+  inner.append(brand, center, actions);
   nav.append(inner);
   return nav;
 }

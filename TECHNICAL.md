@@ -63,6 +63,7 @@ Every administrative action is wrapped by `./krull` at the project root.
 | `./krull stop` | Stops all services. Your data stays. |
 | `./krull setup` | Installs filters into Open WebUI, installs `krull-claude`. Run once after first install. |
 | `./krull update` | Pulls latest images and recreates containers. Your data stays. |
+| Update button (UI) | Same effect as `./krull update`, but also `git pull`s the repo first. Lives in the top-right of the Krull Home nav. Driven by the `krull-updater` sidecar container; see [Update mechanism](#update-mechanism) below. |
 | `./krull pull-model <model>` | Pulls Ollama models with tuned parameters (temperature 0.7, top_p 0.8) |
 | `./krull download-wikipedia [mini\|nopic\|medicine\|full]` | Downloads Wikipedia ZIM files for Kiwix |
 | `./krull download-knowledge <package\|bundle> [...]` | Downloads dev docs, Stack Exchange, knowledge archives, and more |
@@ -328,6 +329,48 @@ Copy `.env.sample` to `.env` to customize settings, or just use the **Settings**
 | Multi-agent coordination | Limited | Smaller models struggle with parallel agents |
 
 ---
+
+## Update mechanism
+
+The Update button in the Krull Home nav is backed by a small idle sidecar container called `krull-updater`. The flow is:
+
+1. User clicks **Update Krull** in the nav → modal shows the current commit
+2. Confirm → frontend POSTs `/api/update`
+3. Krull Home writes a sentinel file at `data/.update-requested` and returns immediately
+4. The updater (which polls every 3s) sees the sentinel, deletes it, and runs:
+   - `git fetch https://github.com/odysseyalive/krull-ai.git main` (HTTPS, no SSH key needed)
+   - `git merge --ff-only FETCH_HEAD` — refuses if the local branch has diverged or has uncommitted changes
+   - `docker compose up -d --build <every-service-except-itself>` — rebuilds everything in place
+   - `bash scripts/setup.sh` — re-provisions Open WebUI filters in case any changed
+   - Writes `data/.update-status` with the result
+5. The frontend polls `/api/version` and `/api/update/status` while this runs. Krull Home itself rebuilds mid-flow, so the API drops out — the frontend tolerates the gap and resumes polling. When `/api/version` returns a different commit hash, the page reloads on the new build.
+
+**Why a sidecar instead of a subprocess?** A child process spawned from inside Krull Home would die when Krull Home is recreated (no init reparenting inside docker). The updater lives in its own container with its own process group so it survives the rebuild and can drive it to completion.
+
+**Force a re-run with the CLI:**
+
+```bash
+./scripts/update.sh
+```
+
+This skips the sentinel and just runs the same operations directly on the host. Useful if the sidecar is misbehaving.
+
+**Inspect the most recent update:**
+
+```bash
+cat data/.update-status   # JSON: {phase, timestamp, message}
+cat data/.update-log      # full stdout/stderr from the last attempt
+```
+
+Both are also exposed at `GET /api/update/status` and `GET /api/update/log`.
+
+**Force a re-run when the local repo has diverged:** the updater refuses to clobber local work. Either commit/stash your changes, or reset manually:
+
+```bash
+git fetch https://github.com/odysseyalive/krull-ai.git main
+git reset --hard FETCH_HEAD       # destructive — wipes local changes
+./scripts/update.sh
+```
 
 ## Architecture
 

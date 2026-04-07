@@ -146,6 +146,18 @@ services:
     volumes:
       - ./kiwix-front/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./kiwix-front/favicon:/usr/share/nginx/favicon:ro
+      - ./kiwix-front/dark.css:/usr/share/nginx/krull/dark.css:ro
+      - ./kiwix-front/toggle.js:/usr/share/nginx/krull/toggle.js:ro
+
+  krull-updater:
+    build: ./krull-updater
+    container_name: krull-updater
+    restart: unless-stopped
+    volumes:
+      # The repo, so we can git fetch + git merge into it
+      - .:/workspace
+      # Docker socket so we can rebuild + restart sibling containers
+      - /var/run/docker.sock:/var/run/docker.sock
 
   krull-home:
     build: ./krull-home

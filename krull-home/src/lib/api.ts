@@ -44,7 +44,7 @@ export async function fetchEnv(): Promise<EnvPayload> {
 
 export async function saveEnv(
   values: Record<string, string>,
-): Promise<{ ok: true; changed: string[]; affects: string[] }> {
+): Promise<{ ok: true; changed: string[]; affects: string[]; retuneJobId?: string }> {
   const res = await fetch("/api/env", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -54,7 +54,12 @@ export async function saveEnv(
     const text = await res.text();
     throw new Error(`/api/env -> ${res.status}: ${text}`);
   }
-  return (await res.json()) as { ok: true; changed: string[]; affects: string[] };
+  return (await res.json()) as {
+    ok: true;
+    changed: string[];
+    affects: string[];
+    retuneJobId?: string;
+  };
 }
 
 export type PackageKind = "knowledge" | "wikipedia" | "maps";
@@ -163,6 +168,39 @@ export async function selectModel(key: string): Promise<void> {
     body: JSON.stringify({ key }),
   });
   if (!res.ok) throw new Error(`select failed: ${await res.text()}`);
+}
+
+export interface VersionInfo {
+  commit: string;
+  shortCommit: string;
+  branch: string | null;
+}
+export type UpdatePhase = "idle" | "running" | "complete" | "failed";
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  timestamp?: string;
+  message?: string;
+}
+
+export async function fetchVersion(signal?: AbortSignal): Promise<VersionInfo> {
+  const res = await fetch("/api/version", { signal });
+  if (!res.ok) throw new Error(`/api/version -> ${res.status}`);
+  return (await res.json()) as VersionInfo;
+}
+
+export async function triggerUpdate(): Promise<{ requestedAt: string }> {
+  const res = await fetch("/api/update", { method: "POST" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`/api/update -> ${res.status}: ${text}`);
+  }
+  return (await res.json()) as { ok: true; requestedAt: string };
+}
+
+export async function fetchUpdateStatus(signal?: AbortSignal): Promise<UpdateStatus> {
+  const res = await fetch("/api/update/status", { signal });
+  if (!res.ok) throw new Error(`/api/update/status -> ${res.status}`);
+  return (await res.json()) as UpdateStatus;
 }
 
 export function streamJob(jobId: string, onEvent: (ev: JobEvent) => void): () => void {

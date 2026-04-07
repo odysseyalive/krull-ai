@@ -2,7 +2,14 @@ import { Header } from "../components/Header";
 import { Nav } from "../components/Nav";
 import { toast } from "../components/Toast";
 import { ModelPicker } from "../components/ModelPicker";
-import { fetchEnv, restartContainer, saveEnv, type EnvField, type EnvPayload } from "../lib/api";
+import {
+  fetchEnv,
+  restartContainer,
+  saveEnv,
+  streamJob,
+  type EnvField,
+  type EnvPayload,
+} from "../lib/api";
 
 export async function SettingsPage(): Promise<HTMLElement> {
   const root = document.createElement("div");
@@ -151,6 +158,21 @@ export async function SettingsPage(): Promise<HTMLElement> {
       restartBtn.disabled = lastAffected.length === 0;
       if (lastAffected.length > 0) {
         restartBtn.textContent = `Restart ${lastAffected.length} service${lastAffected.length === 1 ? "" : "s"}`;
+      }
+      // If a model re-tune was kicked off (because temperature/top_p/etc
+      // changed), stream its progress so the user knows their parameter
+      // change is actually being applied to every installed model.
+      if (result.retuneJobId) {
+        toast("Re-tuning installed models with new parameters…", "info");
+        const stop = streamJob(result.retuneJobId, (ev) => {
+          if (ev.phase === "done") {
+            stop();
+            toast(ev.message ?? "Models re-tuned.", "success");
+          } else if (ev.phase === "failed") {
+            stop();
+            toast(`Re-tune failed: ${ev.error ?? "unknown error"}`, "error", 6000);
+          }
+        });
       }
     } catch (err) {
       toast(`Save failed: ${(err as Error).message}`, "error", 6000);

@@ -77,6 +77,10 @@ You'll see three doors:
 
 Each door opens in a new tab so the homepage stays put.
 
+### Updating Krull
+
+The **Update** button in the top-right of the Krull Home nav (visible on every page) pulls the latest code from GitHub, rebuilds every service, and re-runs setup. Your data, models, maps, and downloaded knowledge are not touched. The page reloads automatically when the new build is ready. You can also run `./scripts/update.sh` from the terminal — both paths do the same thing.
+
 ### First things to do
 
 1. **Pick a model.** Open the homepage's **Settings** page. The "Pick a brain" panel at the top has three recommended models — pick the one that fits your GPU (see the table below). Click "Pull & activate" or "Set as active". Krull pulls the model, wires it into the LiteLLM gateway, and restarts the gateway for you.
