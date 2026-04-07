@@ -23,6 +23,8 @@ export interface CatalogPackage {
   category?: string;
   installed?: boolean;
   installedSizeBytes?: number;
+  /** If a file exists on disk but failed format/integrity inspection */
+  corrupt?: "html" | "magic" | "truncated" | "unreadable" | string;
 }
 
 export interface CatalogBundle {
@@ -217,6 +219,87 @@ function prettyWikipediaName(key: string): string {
   }
 }
 
+/**
+ * Inspect a downloaded file and return whether it's the kind of file
+ * the catalog says it should be.
+ *
+ * For ZIM files (knowledge / wikipedia) we check both magic bytes AND
+ * truncation. The ZIM header at offset 72 holds a uint64 pointing at
+ * the file's trailing 16-byte MD5 checksum; if the file is shorter
+ * than checksumPos + 16, the download was interrupted.
+ *
+ * Returns:
+ *   { ok: true, sizeBytes }                — looks valid
+ *   { ok: false, reason: "missing" }       — file isn't there
+ *   { ok: false, reason: "html" }          — got an HTML error page
+ *   { ok: false, reason: "magic" }         — wrong file format
+ *   { ok: false, reason: "truncated" }     — partial download
+ */
+async function inspectPackageFile(
+  filePath: string,
+  kind: PackageKind,
+): Promise<{ ok: true; sizeBytes: number } | { ok: false; reason: string }> {
+  let stat;
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    return { ok: false, reason: "missing" };
+  }
+
+  let fh;
+  try {
+    fh = await fs.open(filePath, "r");
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+  try {
+    const head = Buffer.alloc(80);
+    const { bytesRead } = await fh.read(head, 0, 80, 0);
+    if (bytesRead < 4) return { ok: false, reason: "truncated" };
+
+    // HTML 404 pages from a stale mirror look like text starting with
+    // "<!DOCTYPE" or "<html" — reject those before any format checks.
+    const headStr = head.slice(0, Math.min(bytesRead, 16)).toString("utf8");
+    if (/^\s*<(?:!doctype|html)/i.test(headStr)) {
+      return { ok: false, reason: "html" };
+    }
+
+    if (kind === "knowledge" || kind === "wikipedia") {
+      // ZIM magic: 5A 49 4D 04
+      if (
+        head[0] !== 0x5a ||
+        head[1] !== 0x49 ||
+        head[2] !== 0x4d ||
+        head[3] !== 0x04
+      ) {
+        return { ok: false, reason: "magic" };
+      }
+      if (bytesRead >= 80) {
+        // ZIM header offset 72: uint64 little-endian, position of the
+        // trailing MD5 checksum block (16 bytes).
+        const checksumPos = Number(head.readBigUInt64LE(72));
+        if (stat.size < checksumPos + 16) {
+          return { ok: false, reason: "truncated" };
+        }
+      }
+    }
+
+    if (kind === "maps") {
+      // PMTiles magic: ASCII "PMTiles"
+      if (
+        bytesRead < 7 ||
+        head.slice(0, 7).toString("ascii") !== "PMTiles"
+      ) {
+        return { ok: false, reason: "magic" };
+      }
+    }
+
+    return { ok: true, sizeBytes: stat.size };
+  } finally {
+    await fh.close();
+  }
+}
+
 export async function loadCatalog(repo: string): Promise<Catalog> {
   const [knowledgeText, wikipediaText, mapsText] = await Promise.all([
     fs.readFile(path.join(repo, SCRIPTS.knowledge), "utf8"),
@@ -233,12 +316,18 @@ export async function loadCatalog(repo: string): Promise<Catalog> {
   await Promise.all(
     packages.map(async (pkg) => {
       const full = path.join(repo, pkg.targetDir, pkg.file);
-      try {
-        const st = await fs.stat(full);
+      const result = await inspectPackageFile(full, pkg.kind);
+      if (result.ok) {
         pkg.installed = true;
-        pkg.installedSizeBytes = st.size;
-      } catch {
+        pkg.installedSizeBytes = result.sizeBytes;
+      } else {
         pkg.installed = false;
+        // A file that exists on disk but failed inspection is *corrupt*
+        // — it's important to surface this distinct state so the UI
+        // can offer a re-install instead of pretending nothing's there.
+        if (result.reason !== "missing") {
+          (pkg as CatalogPackage & { corrupt?: string }).corrupt = result.reason;
+        }
       }
     }),
   );

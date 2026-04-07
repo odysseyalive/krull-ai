@@ -111,6 +111,17 @@ export function ModelPicker(): HTMLElement {
       status.append(badge);
     }
 
+    // Progress strip — appears during a pull. Indeterminate, because
+    // ollama pull's progress format is opaque enough that an honest
+    // "something is happening" stripe is better than a fake percentage.
+    const progress = document.createElement("div");
+    progress.className = "krull-progress model-card__progress";
+    const fill = document.createElement("div");
+    fill.className = "krull-progress__fill";
+    const pLabel = document.createElement("div");
+    pLabel.className = "krull-progress__label";
+    progress.append(fill, pLabel);
+
     const action = document.createElement("button");
     action.type = "button";
     action.className = "btn btn--sm";
@@ -132,7 +143,7 @@ export function ModelPicker(): HTMLElement {
     bottom.className = "model-card__bottom";
     bottom.append(status, action);
 
-    card.append(top, bottom);
+    card.append(top, progress, bottom);
     return card;
   }
 
@@ -157,6 +168,10 @@ export function ModelPicker(): HTMLElement {
   }
 
   async function handlePull(model: RecommendedModel, button: HTMLButtonElement) {
+    const card = button.closest(".model-card") as HTMLElement | null;
+    const pLabel = card?.querySelector(".krull-progress__label") as HTMLElement | null;
+    card?.classList.add("model-card--pulling");
+    if (pLabel) pLabel.textContent = "Pulling…";
     button.disabled = true;
     button.textContent = "Starting…";
     try {
@@ -164,6 +179,7 @@ export function ModelPicker(): HTMLElement {
       const stop = streamJob(jobId, async (ev) => {
         if (ev.phase === "downloading") {
           button.textContent = "Pulling…";
+          if (pLabel) pLabel.textContent = "Pulling model from registry…";
         } else if (ev.phase === "done") {
           stop();
           button.textContent = "Activating…";

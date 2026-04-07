@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { restartContainer, isRestartable } from "./docker.js";
-import type { CatalogPackage } from "./catalog.js";
+import { loadCatalog as loadCatalogForCleanup, type CatalogPackage } from "./catalog.js";
 import { type Job, pushEvent } from "./jobs.js";
 
 const REPO = process.env.KRULL_REPO ?? "/workspace";
@@ -103,8 +103,24 @@ export function startInstall(job: Job, pkg: CatalogPackage): void {
       return;
     }
 
+    // Sanity-check the file actually contains what we expect. The
+    // download mirror sometimes serves an HTML 404 page when a catalog
+    // entry has drifted from upstream — curl saves it under the .zim
+    // path and kiwix-serve refuses to start. Catch this here, delete
+    // the bad file, and report a useful error instead of letting it
+    // poison the zim/ directory.
     try {
       const st = await fs.stat(target);
+      const validation = await validateDownload(target, pkg);
+      if (!validation.ok) {
+        await fs.unlink(target).catch(() => {});
+        pushEvent(job, {
+          phase: "failed",
+          error: validation.reason,
+          timestamp: Date.now(),
+        });
+        return;
+      }
       pushEvent(job, {
         phase: "downloading",
         percent: 100,
@@ -159,11 +175,12 @@ export function startInstall(job: Job, pkg: CatalogPackage): void {
  * parse stdout for the script's per-package "Downloading: ..." log
  * lines to drive an "Installing X of N" progress display.
  */
-export function startBundleInstall(
+export async function startBundleInstall(
   job: Job,
   bundleKey: string,
   totalCount: number,
-): void {
+  memberKeys: string[] = [],
+): Promise<void> {
   pushEvent(job, {
     phase: "downloading",
     percent: 0,
@@ -172,6 +189,39 @@ export function startBundleInstall(
     message: `Installing bundle ${bundleKey}…`,
     timestamp: Date.now(),
   });
+
+  // Pre-clean: remove any corrupt files for members of this bundle
+  // BEFORE running the script. The script's [ -f ] "already downloaded"
+  // check would otherwise shortcircuit past corrupt files forever, and
+  // we'd loop on the same broken state on every click. We do this by
+  // re-reading the catalog (so we have the corrupt flag) and unlinking
+  // any matching files.
+  if (memberKeys.length > 0) {
+    try {
+      const catalog = await loadCatalogForCleanup(REPO);
+      const cleaned: string[] = [];
+      for (const key of memberKeys) {
+        const pkg = catalog.packages.find((p) => p.key === key);
+        if (pkg && pkg.corrupt) {
+          const full = path.join(REPO, pkg.targetDir, pkg.file);
+          await fs.unlink(full).catch(() => {});
+          cleaned.push(`${key} (${pkg.corrupt})`);
+        }
+      }
+      if (cleaned.length > 0) {
+        pushEvent(job, {
+          phase: "downloading",
+          percent: 0,
+          bytes: 0,
+          total: totalCount,
+          message: `Cleaned ${cleaned.length} corrupt file${cleaned.length === 1 ? "" : "s"}: ${cleaned.join(", ")}`,
+          timestamp: Date.now(),
+        });
+      }
+    } catch {
+      /* If catalog scan fails we just proceed without pre-clean */
+    }
+  }
 
   const child = spawn("bash", ["scripts/download-knowledge.sh", bundleKey], {
     cwd: REPO,
@@ -243,6 +293,38 @@ export function startBundleInstall(
       return;
     }
 
+    // Post-validate: scan each member's file and report any that
+    // failed to download cleanly. The bash script's --fail flag now
+    // catches HTTP errors, but a network glitch can still leave a
+    // truncated file behind, and an upstream catalog drift could
+    // produce a 200 response with the wrong content. This is the
+    // safety net that prevents another infinite "install missing" loop.
+    if (memberKeys.length > 0) {
+      try {
+        const catalog = await loadCatalogForCleanup(REPO);
+        const stillBad: string[] = [];
+        for (const key of memberKeys) {
+          const pkg = catalog.packages.find((p) => p.key === key);
+          if (!pkg) continue;
+          if (!pkg.installed) {
+            stillBad.push(
+              pkg.corrupt ? `${key} (${pkg.corrupt})` : `${key} (missing)`,
+            );
+          }
+        }
+        if (stillBad.length > 0) {
+          pushEvent(job, {
+            phase: "failed",
+            error: `Bundle install completed but ${stillBad.length} package${stillBad.length === 1 ? "" : "s"} could not be downloaded: ${stillBad.join(", ")}. The catalog URL may be stale upstream.`,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+      } catch {
+        /* fall through and continue with restart */
+      }
+    }
+
     pushEvent(job, {
       phase: "downloading",
       percent: 100,
@@ -285,6 +367,65 @@ export function startBundleInstall(
       timestamp: Date.now(),
     });
   });
+}
+
+/**
+ * After a download finishes, peek at the first few bytes of the file
+ * and confirm it matches the expected magic for its kind. ZIM files
+ * start with the four bytes "ZIM\x04"; PMTiles start with "PMTiles".
+ * Anything else (HTML 404 pages from a stale mirror, partial
+ * truncated downloads with no header at all) is rejected.
+ */
+async function validateDownload(
+  filePath: string,
+  pkg: CatalogPackage,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  let head: Buffer;
+  try {
+    const fh = await fs.open(filePath, "r");
+    try {
+      const buf = Buffer.alloc(8);
+      await fh.read(buf, 0, 8, 0);
+      head = buf;
+    } finally {
+      await fh.close();
+    }
+  } catch (err) {
+    return { ok: false, reason: `could not read downloaded file: ${(err as Error).message}` };
+  }
+
+  // HTML detection — if the response body starts with "<!DOCTYPE" or "<html",
+  // the mirror returned an error page, not the file we asked for.
+  const headStr = head.toString("utf8");
+  if (/^\s*<(?:!doctype|html)/i.test(headStr)) {
+    return {
+      ok: false,
+      reason: `download returned an HTML page instead of the expected file. The catalog entry for ${pkg.key} likely points at a stale URL upstream — please report it.`,
+    };
+  }
+
+  if (pkg.kind === "knowledge" || pkg.kind === "wikipedia") {
+    // ZIM file magic: "ZIM\x04" (5A 49 4D 04)
+    if (head[0] !== 0x5a || head[1] !== 0x49 || head[2] !== 0x4d || head[3] !== 0x04) {
+      return {
+        ok: false,
+        reason: `downloaded file is not a valid ZIM (got bytes ${[...head.slice(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join(" ")})`,
+      };
+    }
+  }
+
+  if (pkg.kind === "maps") {
+    // PMTiles magic: "PMTiles" (50 4D 54 69 6C 65 73)
+    const expected = Buffer.from("PMTiles", "ascii");
+    if (!head.slice(0, 7).equals(expected)) {
+      return {
+        ok: false,
+        reason: `downloaded file is not a valid PMTiles archive (got bytes ${[...head.slice(0, 7)].map((b) => b.toString(16).padStart(2, "0")).join(" ")})`,
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 export async function deletePackage(pkg: CatalogPackage): Promise<void> {

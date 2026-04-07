@@ -66,7 +66,7 @@ router.post("/library/install-bundle", async (req, res) => {
     return;
   }
   const job = createJob(`${bundle.kind}-bundle`, bundle.key);
-  startBundleInstall(job, bundle.key, bundle.members.length);
+  void startBundleInstall(job, bundle.key, bundle.members.length, bundle.members);
   res.json({ jobId: job.id, kind: bundle.kind, key: bundle.key });
 });
 

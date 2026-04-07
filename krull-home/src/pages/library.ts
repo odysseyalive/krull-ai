@@ -108,6 +108,10 @@ export async function LibraryPage(): Promise<HTMLElement> {
     if (!card) return;
     const button = card.querySelector("button") as HTMLButtonElement | null;
     const phase = card.querySelector(".bundle-card__phase") as HTMLElement | null;
+    const progress = card.querySelector(".krull-progress") as HTMLElement | null;
+    const fill = card.querySelector(".krull-progress__fill") as HTMLElement | null;
+    const pLabel = card.querySelector(".krull-progress__label") as HTMLElement | null;
+    card.classList.add("bundle-card--installing");
     if (button) {
       button.disabled = true;
       button.textContent = "Starting…";
@@ -117,9 +121,12 @@ export async function LibraryPage(): Promise<HTMLElement> {
       const { jobId } = await startBundleInstall(bundle.kind, bundle.key);
       const stop = streamJob(jobId, (ev) => {
         if (phase && ev.message) phase.textContent = ev.message;
-        if (button && typeof ev.percent === "number") {
-          button.textContent = `${ev.percent}%`;
+        if (typeof ev.percent === "number") {
+          if (fill) fill.style.width = `${ev.percent}%`;
+          if (pLabel) pLabel.textContent = `${ev.percent}%`;
+          if (button) button.textContent = `${ev.percent}%`;
         }
+        if (ev.phase === "restarting" && pLabel) pLabel.textContent = "Restarting…";
         if (ev.phase === "done") {
           stop();
           if (button) button.textContent = "Installed";
@@ -127,21 +134,18 @@ export async function LibraryPage(): Promise<HTMLElement> {
           void refreshCatalog();
         } else if (ev.phase === "failed") {
           stop();
-          if (button) {
-            button.disabled = false;
-            button.textContent = "Install all";
-          }
-          if (phase) phase.textContent = "";
           toast(`Bundle install failed: ${ev.error ?? "unknown error"}`, "error", 6000);
+          // Refresh the catalog so the card re-renders with the
+          // correct missing-count and the right button text. We don't
+          // try to manually reset state here — refreshCatalog replaces
+          // the card element entirely.
+          if (progress) void progress;
+          void refreshCatalog();
         }
       });
     } catch (err) {
-      if (button) {
-        button.disabled = false;
-        button.textContent = "Install all";
-      }
-      if (phase) phase.textContent = "";
       toast((err as Error).message, "error", 6000);
+      void refreshCatalog();
     }
   }
 
@@ -222,6 +226,14 @@ function applyJobEvent(
   button: HTMLButtonElement | null,
   bar: HTMLElement | null,
 ) {
+  // Update both the colored fill and the percent label.
+  const fill = row.querySelector(".krull-progress__fill") as HTMLElement | null;
+  const label = row.querySelector(".krull-progress__label") as HTMLElement | null;
+  if (typeof ev.percent === "number") {
+    if (fill) fill.style.width = `${ev.percent}%`;
+    if (label) label.textContent = `${ev.percent}%`;
+  }
+  // Older code paths used a `bar` arg directly — keep it in sync too.
   if (bar && typeof ev.percent === "number") {
     bar.style.width = `${ev.percent}%`;
   }
@@ -235,6 +247,8 @@ function applyJobEvent(
       break;
     case "restarting":
       button.textContent = "Restarting";
+      if (fill) fill.style.width = "100%";
+      if (label) label.textContent = "Restarting…";
       break;
     case "done":
       button.textContent = "Installed";
@@ -426,6 +440,17 @@ function renderBundleCard(
     badge.textContent = "Installed";
     card.append(title, desc, meta, phase, badge);
   } else {
+    // Progress strip lives between the phase line and the button so
+    // it's visually attached to the action when it appears.
+    const progress = document.createElement("div");
+    progress.className = "krull-progress bundle-card__progress";
+    const fill = document.createElement("div");
+    fill.className = "krull-progress__fill";
+    const pLabel = document.createElement("div");
+    pLabel.className = "krull-progress__label";
+    pLabel.textContent = "0%";
+    progress.append(fill, pLabel);
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn--primary btn--sm";
@@ -433,7 +458,7 @@ function renderBundleCard(
       ? `Install ${total - installedCount} missing`
       : "Install all";
     btn.addEventListener("click", () => onInstall(bundle));
-    card.append(title, desc, meta, phase, btn);
+    card.append(title, desc, meta, phase, progress, btn);
   }
   return card;
 }

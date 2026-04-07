@@ -16,7 +16,7 @@ CATALOG=(
     "devdocs-javascript|devdocs/devdocs_en_javascript_2026-01.zim|JavaScript reference|3 MB"
     "devdocs-typescript|devdocs/devdocs_en_typescript_2026-01.zim|TypeScript reference|3 MB"
     "devdocs-node|devdocs/devdocs_en_node_2026-01.zim|Node.js docs|5 MB"
-    "devdocs-react|devdocs/devdocs_en_react_2026-01.zim|React docs|2 MB"
+    "devdocs-react|devdocs/devdocs_en_react_2026-02.zim|React docs|3 MB"
     "devdocs-docker|devdocs/devdocs_en_docker_2026-01.zim|Docker documentation|2 MB"
     "devdocs-kubernetes|devdocs/devdocs_en_kubernetes_2026-01.zim|Kubernetes docs|1 MB"
     "devdocs-git|devdocs/devdocs_en_git_2026-01.zim|Git reference|2 MB"
@@ -287,9 +287,17 @@ download_package() {
     echo "[*] Downloading: $desc ($size)"
     echo "    File: $filename"
 
-    curl -L -C - -o "$ZIM_DIR/$filename" \
+    # --fail makes curl exit non-zero on HTTP 4xx/5xx instead of saving
+    # the error response body as if it were the file. We then explicitly
+    # remove any partial file curl may have left behind so the next
+    # attempt isn't shortcircuited by the [ -f ] check above.
+    if ! curl --fail -L -C - -o "$ZIM_DIR/$filename" \
         "https://download.kiwix.org/zim/$file" \
-        --progress-bar
+        --progress-bar; then
+        rm -f "$ZIM_DIR/$filename"
+        echo "[-] Download failed: $filename (the catalog URL may be stale upstream)"
+        return 1
+    fi
 
     echo "[+] Done: $filename"
     echo ""

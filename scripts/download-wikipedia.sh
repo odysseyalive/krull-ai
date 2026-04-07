@@ -53,9 +53,14 @@ if [ -f "$ZIM_DIR/$FILE" ]; then
     fi
 fi
 
-curl -L -C - -o "$ZIM_DIR/$FILE" \
+if ! curl --fail -L -C - -o "$ZIM_DIR/$FILE" \
     "https://download.kiwix.org/zim/wikipedia/$FILE" \
-    --progress-bar
+    --progress-bar; then
+    rm -f "$ZIM_DIR/$FILE"
+    echo ""
+    echo "Download failed: the URL may be stale upstream."
+    exit 1
+fi
 
 echo ""
 echo "Download complete: $ZIM_DIR/$FILE"

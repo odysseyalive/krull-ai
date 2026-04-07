@@ -47,14 +47,6 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
   }
   meta.append(sizeLine);
 
-  // Progress bar slot (filled in Phase 6 during install)
-  const progressWrap = document.createElement("div");
-  progressWrap.className = "pkg-row__progress";
-  const progressBar = document.createElement("div");
-  progressBar.className = "pkg-row__progress-bar";
-  progressWrap.append(progressBar);
-  meta.append(progressWrap);
-
   const actions = document.createElement("div");
   actions.className = "pkg-row__actions";
 
@@ -85,6 +77,18 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
   }
 
   meta.append(actions);
-  row.append(info, meta);
+
+  // Full-width progress strip — hidden until install starts. Spans both
+  // grid columns so it sits cleanly below the row content.
+  const progress = document.createElement("div");
+  progress.className = "krull-progress pkg-row__progress";
+  const fill = document.createElement("div");
+  fill.className = "krull-progress__fill";
+  const label = document.createElement("div");
+  label.className = "krull-progress__label";
+  label.textContent = "0%";
+  progress.append(fill, label);
+
+  row.append(info, meta, progress);
   return row;
 }

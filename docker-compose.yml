@@ -185,13 +185,17 @@ services:
     volumes:
       - ./zim:/data:ro
     entrypoint: ["/bin/sh", "-c"]
+    # --skipInvalid lets kiwix-serve start even if one of the .zim files
+    # in /data/ is corrupt or truncated. Without it, a single bad file
+    # (e.g. an interrupted download or an HTML 404 page saved with a
+    # .zim extension) takes the whole service into a crash loop.
     command:
       - |
         if ls /data/*.zim 1>/dev/null 2>&1; then
-          exec kiwix-serve /data/*.zim --address=all --port=8080
+          exec kiwix-serve --skipInvalid /data/*.zim --address=all --port=8080
         else
           echo "No ZIM files found in /data/. Waiting for files..."
           while ! ls /data/*.zim 1>/dev/null 2>&1; do sleep 30; done
-          exec kiwix-serve /data/*.zim --address=all --port=8080
+          exec kiwix-serve --skipInvalid /data/*.zim --address=all --port=8080
         fi
 
