@@ -1729,13 +1729,13 @@ class ProjectContext:
         # standalone system message at the front via inject_shell_rules,
         # alongside TOOL_GUIDANCE/DATE/TRUTH_GUARD where they get the same
         # anchoring benefit as the other instructional filters.
+        #
+        # The "PreToolUse hook error" environmental note also used to live
+        # here. Removed because the literal hook error string is rendered
+        # client-side by Claude Code as a display annotation and is not
+        # transmitted in the API content. The model can't act on something
+        # it can't see; the advice was a no-op.
         return [
-            "",
-            "Environmental notes:",
-            "- If Bash starts returning 'PreToolUse:Bash hook error' (rather",
-            "  than shell errors), the project has a hook with an unquoted",
-            "  $CLAUDE_PROJECT_DIR. Prefer Read/Grep/Glob, which don't fire",
-            "  the Bash hook chain.",
             "[End Krull Project Context]",
         ]
 
@@ -1848,23 +1848,24 @@ def inject_project_context(messages: list) -> list:
     return _insert_after_system_messages(messages, body)
 
 
-# Detect tool_results that contain known hook failure shapes, so we can
-# inject a one-line recovery hint on the next turn. Generic, not project-
-# or skill-specific. Mirrors the tool error feedback loop pattern in
-# services/tools/toolExecution.ts.
-HOOK_ERROR_PATTERNS = [
-    "PreToolUse:Bash hook error",
-    "PreToolUse:Edit hook error",
-    "PreToolUse:Write hook error",
-]
-HOOK_ERROR_HINT = (
-    "[Krull] A previous tool call was rejected by a project PreToolUse hook "
-    "(likely an unquoted $CLAUDE_PROJECT_DIR in a hook command). The Bash/"
-    "Edit/Write tool may be unreliable in this environment. Prefer Read, "
-    "Grep, or Glob for inspection. For dictionary or index lookups, invoke "
-    "the relevant Skill — the proxy can run helper scripts directly without "
-    "firing project hooks."
-)
+# NOTE: A "hook_error_hint" filter used to live here. It was supposed to
+# detect "PreToolUse:Bash hook error" in tool results and inject a
+# recovery hint telling the model to prefer Read/Grep/Glob over Bash on
+# projects with broken hooks. Investigation revealed it is structurally
+# impossible: the literal string "PreToolUse:Bash hook error" never
+# appears in any tool result content the proxy receives. It is rendered
+# client-side by Claude Code as a display annotation, NOT transmitted in
+# the API content. The proxy only sees the *actual* tool result (often
+# the script output, sometimes empty, sometimes wrapped in
+# <tool_use_error> for Skill/Read errors but never for hook blocks).
+# We grep'd every unique short tool output from the proxy's history and
+# found zero matches for "PreToolUse" anywhere in any tool result. Dead
+# code removed. The data starvation warning's _FAILURE_PATTERNS list also
+# carries the same dead PreToolUse regex; it is left in place there for
+# now as a no-op (the same investigation result applies — it can never
+# fire) but could be cleaned up later. If we ever find evidence the proxy
+# CAN see hook errors in some shape, detection can be re-added — but
+# with a real signal, not the literal string we were searching for.
 
 
 def _content_text(content) -> str:
@@ -1875,30 +1876,6 @@ def _content_text(content) -> str:
             p.get("text", "") if isinstance(p, dict) else str(p) for p in content
         )
     return str(content) if content is not None else ""
-
-
-def messages_have_hook_error(messages: list) -> bool:
-    """Scan tool messages for the known hook error literals."""
-    for m in messages:
-        if m.get("role") != "tool":
-            continue
-        text = _content_text(m.get("content", ""))
-        if any(pat in text for pat in HOOK_ERROR_PATTERNS):
-            return True
-    return False
-
-
-def inject_hook_error_hint(messages: list) -> list:
-    """If a hook-error tool result is present, inject the recovery hint
-    after the client's main system prompt."""
-    if not messages_have_hook_error(messages):
-        return messages
-    # Avoid duplicate hints
-    for m in messages:
-        if m.get("role") == "system" and HOOK_ERROR_HINT in _content_text(m.get("content", "")):
-            return messages
-    print("[FILTER] +hook_error_hint", file=sys.stderr, flush=True)
-    return _insert_after_system_messages(messages, HOOK_ERROR_HINT)
 
 
 async def apply_filters(
@@ -1919,8 +1896,7 @@ async def apply_filters(
       [4] TRUTH_GUARD
       [5] Claude Code's main system prompt
       [6] KRULL_PROJECT_CONTEXT      ← inserted AFTER Claude Code's prompt
-      [7] HOOK_ERROR_HINT             (conditional)
-      [8..] user/assistant messages
+      [7..] user/assistant messages
 
     We tried moving TOOL_GUIDANCE/DATE/TRUTH_GUARD to insert-after-system as
     well. It broke tool-calling behavior in the qwen 9B — turns out
@@ -1967,7 +1943,6 @@ async def apply_filters(
             messages = await inject_map_search(messages)
     messages = inject_project_context(messages)
     messages = inject_slash_command_protocol(messages)
-    messages = inject_hook_error_hint(messages)
     messages = inject_loop_break(messages)
     messages = inject_data_starvation_warning(messages)
     messages = inject_stalled_progress_warning(messages)
