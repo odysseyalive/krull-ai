@@ -98,13 +98,20 @@ docker restart krull-kiwix
 **Developer docs, Stack Exchange, and more:**
 
 ```bash
-./krull download-knowledge dev-essentials    # Python, JS, TS, Node, Git, Docker, Bash (~50 MB)
-./krull download-knowledge web-dev            # Full web stack including PHP, MariaDB (~55 MB)
-./krull download-knowledge data-science       # Python, NumPy, Pandas, Scikit-learn (~75 MB)
-./krull download-knowledge sysadmin           # Arch Wiki, Unix & Server Q&A (~5.5 GB)
-./krull download-knowledge community          # Code Review, Security, SoftEng Q&A (~5 GB)
+./krull download-knowledge dev-essentials      # Python, JS, TS, Node, Git, Docker, Bash (~50 MB)
+./krull download-knowledge web-dev              # Web stack incl. Next.js, Tailwind, SVG, PHP, MariaDB (~58 MB)
+./krull download-knowledge krull-stack          # Everything this repo itself uses: Docker, FastAPI, Vite, Nginx, etc. (~20 MB)
+./krull download-knowledge data-science         # Python, NumPy, Pandas, Scikit-learn (~75 MB)
+./krull download-knowledge sysadmin             # Arch Wiki, Unix & Server Q&A (~5.5 GB)
+./krull download-knowledge community            # Code Review, Security, SoftEng Q&A (~5 GB)
+./krull download-knowledge cooking-essentials   # Food prep, recipes, Seasoned Advice Q&A (~360 MB)
+./krull download-knowledge survival-essentials  # Post-disaster, field medicine, water, outdoors, appropedia, wikivoyage (~1.9 GB)
 docker restart krull-kiwix
 ```
+
+The `web-dev` bundle now also includes Next.js, Tailwind CSS, and SVG references (in addition to React, TypeScript, JavaScript, Node, HTML, CSS, PHP, PHPUnit, MariaDB). The `krull-stack` bundle covers every downloadable technology used by this repo itself — useful when working on Krull AI offline.
+
+The `survival-essentials` bundle pulls field-medicine, military-medicine (FAS), post-disaster prep, water purification, outdoor wilderness Q&A, Appropedia (sustainability/appropriate tech), Wikivoyage, and curated food preparation. Add-ons available individually: `gardening-stackexchange` (~925 MB), `energypedia` (~799 MB), `ifixit` (~3.5 GB).
 
 **Project Gutenberg (60,000+ free books):**
 

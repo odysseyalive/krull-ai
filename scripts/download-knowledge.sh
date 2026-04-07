@@ -25,6 +25,12 @@ CATALOG=(
     "devdocs-bash|devdocs/devdocs_en_bash_2026-01.zim|Bash reference|1 MB"
     "devdocs-css|devdocs/devdocs_en_css_2026-01.zim|CSS reference|8 MB"
     "devdocs-html|devdocs/devdocs_en_html_2026-01.zim|HTML reference|3 MB"
+    "devdocs-svg|devdocs/devdocs_en_svg_2026-01.zim|SVG reference|1 MB"
+    "devdocs-nextjs|devdocs/devdocs_en_nextjs_2026-01.zim|Next.js framework docs|1 MB"
+    "devdocs-tailwindcss|devdocs/devdocs_en_tailwindcss_2026-02.zim|Tailwind CSS docs|1 MB"
+    "devdocs-fastapi|devdocs/devdocs_en_fastapi_2026-01.zim|FastAPI framework docs|3 MB"
+    "devdocs-vite|devdocs/devdocs_en_vite_2026-01.zim|Vite build tool docs|1 MB"
+    "devdocs-nginx|devdocs/devdocs_en_nginx_2026-01.zim|Nginx web server docs|1 MB"
     "devdocs-php|devdocs/devdocs_en_php_2026-02.zim|PHP documentation|15 MB"
     "devdocs-phpunit|devdocs/devdocs_en_phpunit_2026-02.zim|PHPUnit testing framework|2 MB"
     "devdocs-mariadb|devdocs/devdocs_en_mariadb_2026-01.zim|MariaDB/MySQL docs|10 MB"
@@ -44,6 +50,26 @@ CATALOG=(
     "stackexchange-superuser|stack_exchange/superuser.com_en_all_2026-02.zim|Computer hardware & software Q&A|3.7 GB"
     "stackexchange-softeng|stack_exchange/softwareengineering.stackexchange.com_en_all_2026-02.zim|Software engineering Q&A|457 MB"
     "stackoverflow|stack_exchange/stackoverflow.com_en_all_2023-11.zim|Full Stack Overflow archive|75 GB"
+    "stackexchange-cooking|stack_exchange/cooking.stackexchange.com_en_all_2026-02.zim|Seasoned Advice cooking Q&A|237 MB"
+    "stackexchange-outdoors|stack_exchange/outdoors.stackexchange.com_en_all_2026-02.zim|Outdoors & wilderness Q&A|142 MB"
+    "stackexchange-gardening|stack_exchange/gardening.stackexchange.com_en_all_2026-02.zim|Gardening & landscaping Q&A|925 MB"
+
+    # Survival & Self-Sufficiency
+    "post-disaster|other/zimgit-post-disaster_en_2024-05.zim|Post-disaster survival library|645 MB"
+    "field-medicine|other/zimgit-medicine_en_2024-08.zim|Field & emergency medicine library|70 MB"
+    "military-medicine|zimit/fas-military-medicine_en_2025-06.zim|FAS military medicine library|81 MB"
+    "water|other/zimgit-water_en_2024-08.zim|Water purification & sourcing|21 MB"
+    "appropedia|other/appropedia_en_all_maxi_2026-02.zim|Sustainability & appropriate tech|582 MB"
+    "energypedia|other/energypedia_en_all_maxi_2025-12.zim|Off-grid energy knowledge|799 MB"
+    "wikivoyage|wikivoyage/wikivoyage_en_all_nopic_2026-03.zim|Travel & geography (no images)|232 MB"
+    "ifixit|ifixit/ifixit_en_all_2025-12.zim|iFixit repair guides|3.5 GB"
+
+    # Cooking
+    "food-preparation|other/zimgit-food-preparation_en_2025-04.zim|Curated recipes & food prep techniques|98 MB"
+    "foss-cooking|zimit/foss.cooking_en_all_2026-02.zim|FOSS Cooking recipes|24 MB"
+    "public-domain-recipes|zimit/publicdomainrecipes.com_en_all_2026-02.zim|Public domain recipe collection|23 MB"
+    "grimgrains|zimit/grimgrains_en_all_2026-02.zim|GrimGrains vegan recipes|25 MB"
+    "based-cooking|zimit/based.cooking_en_all_2026-02.zim|Based Cooking recipes|16 MB"
 
     # Linux
     "archlinux|other/archlinux_en_all_maxi_2025-09.zim|Arch Linux Wiki|30 MB"
@@ -80,8 +106,13 @@ print_bundles() {
     echo "  dev-essentials    Core developer docs (~50 MB)"
     echo "                    python, javascript, typescript, node, git, docker, bash"
     echo ""
-    echo "  web-dev           Web development stack (~55 MB)"
-    echo "                    javascript, typescript, react, css, html, node, php, phpunit, mariadb"
+    echo "  web-dev           Web development stack (~58 MB)"
+    echo "                    javascript, typescript, react, nextjs, tailwindcss, css, html,"
+    echo "                    svg, node, php, phpunit, mariadb"
+    echo ""
+    echo "  krull-stack       Everything this repo actually uses (~20 MB)"
+    echo "                    docker, bash, python, fastapi, typescript, javascript, node,"
+    echo "                    vite, nginx, html, css, svg, git"
     echo ""
     echo "  data-science      Data science & ML (~75 MB)"
     echo "                    python, numpy, pandas, scikit"
@@ -92,6 +123,13 @@ print_bundles() {
     echo "  community         Developer Q&A (~5 GB)"
     echo "                    stackexchange-unix, stackexchange-codereview,"
     echo "                    stackexchange-security, stackexchange-softeng"
+    echo ""
+    echo "  survival-essentials Survival, navigation, medicine, self-sufficiency (~1.9 GB)"
+    echo "                    post-disaster, field-medicine, military-medicine, water,"
+    echo "                    food-preparation, stackexchange-outdoors, appropedia, wikivoyage"
+    echo ""
+    echo "  cooking-essentials  Cooking knowledge & recipes (~360 MB)"
+    echo "                    food-preparation, stackexchange-cooking, public-domain-recipes"
     echo ""
     echo "  gutenberg-essentials  Classic literature & reference (~65 GB)"
     echo "                    fiction, american lit, english lit, poetry, philosophy"
@@ -107,7 +145,10 @@ get_bundle_keys() {
             echo "devdocs-python devdocs-javascript devdocs-typescript devdocs-node devdocs-git devdocs-docker devdocs-bash"
             ;;
         web-dev)
-            echo "devdocs-javascript devdocs-typescript devdocs-react devdocs-css devdocs-html devdocs-node devdocs-php devdocs-phpunit devdocs-mariadb"
+            echo "devdocs-javascript devdocs-typescript devdocs-react devdocs-nextjs devdocs-tailwindcss devdocs-css devdocs-html devdocs-svg devdocs-node devdocs-php devdocs-phpunit devdocs-mariadb"
+            ;;
+        krull-stack)
+            echo "devdocs-docker devdocs-bash devdocs-python devdocs-fastapi devdocs-typescript devdocs-javascript devdocs-node devdocs-vite devdocs-nginx devdocs-html devdocs-css devdocs-svg devdocs-git"
             ;;
         data-science)
             echo "devdocs-python devdocs-numpy devdocs-pandas devdocs-scikit"
@@ -117,6 +158,12 @@ get_bundle_keys() {
             ;;
         community)
             echo "stackexchange-unix stackexchange-codereview stackexchange-security stackexchange-softeng"
+            ;;
+        survival-essentials)
+            echo "post-disaster field-medicine military-medicine water food-preparation stackexchange-outdoors appropedia wikivoyage"
+            ;;
+        cooking-essentials)
+            echo "food-preparation stackexchange-cooking public-domain-recipes"
             ;;
         gutenberg-essentials)
             echo "gutenberg-fiction gutenberg-literature gutenberg-british-lit gutenberg-poetry gutenberg-philosophy"
@@ -149,6 +196,24 @@ print_usage() {
     for entry in "${CATALOG[@]}"; do
         IFS='|' read -r key file desc size <<< "$entry"
         case "$key" in stackexchange-*|stackoverflow)
+            printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
+            ;;
+        esac
+    done
+    echo ""
+    echo "  Survival & Self-Sufficiency:"
+    for entry in "${CATALOG[@]}"; do
+        IFS='|' read -r key file desc size <<< "$entry"
+        case "$key" in post-disaster|field-medicine|military-medicine|water|appropedia|energypedia|wikivoyage|ifixit)
+            printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
+            ;;
+        esac
+    done
+    echo ""
+    echo "  Cooking:"
+    for entry in "${CATALOG[@]}"; do
+        IFS='|' read -r key file desc size <<< "$entry"
+        case "$key" in food-preparation|foss-cooking|public-domain-recipes|grimgrains|based-cooking)
             printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
             ;;
         esac
