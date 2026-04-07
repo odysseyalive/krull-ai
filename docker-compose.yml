@@ -135,6 +135,21 @@ services:
     environment:
       - COUNTRY_CODE=${PHOTON_COUNTRY_CODE:-}
 
+  krull-home:
+    build: ./krull-home
+    container_name: krull-home
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the repo so we can read scripts/, .env, zim/, data/tiles/, etc.
+      - .:/workspace
+      # Docker socket so we can restart sibling containers (kiwix, tileserver) after install/delete
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=8000
+      - KRULL_REPO=/workspace
+
   kiwix:
     image: ghcr.io/kiwix/kiwix-serve:latest
     container_name: krull-kiwix

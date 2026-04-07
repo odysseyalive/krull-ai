@@ -21,4 +21,8 @@ echo "Recreating containers with new images..."
 docker compose --project-directory "$PROJECT_DIR" up -d --force-recreate
 
 echo ""
+echo "Re-running setup so any updated filter source is re-pushed to Open WebUI..."
+"$SCRIPT_DIR/setup.sh"
+
+echo ""
 echo "Update complete. Data and models are preserved."

@@ -1,0 +1,41 @@
+/*
+ * Krull palette — dark library / cartographer's study
+ * Deep navy ground, warm parchment gold, cool steel blue.
+ */
+:root {
+  --bg: #0b0e14;
+  --bg-deep: #070a0f;
+  --surface: #11151c;
+  --surface-2: #161b25;
+  --surface-3: #1c2230;
+  --border: #1f2733;
+  --border-strong: #2a3344;
+
+  --ink: #e6edf3;
+  --ink-dim: #8b96a8;
+  --ink-faint: #5a6577;
+
+  --accent: #d4a574;        /* parchment gold */
+  --accent-soft: #b88b5e;
+  --accent-2: #6fb3d2;      /* steel blue */
+  --accent-2-soft: #4f8aa6;
+
+  --ok: #6fbf73;
+  --warn: #d6b04a;
+  --danger: #c66a6a;
+
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-ui: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  --gutter: clamp(1.25rem, 3vw, 2.5rem);
+  --max-width: 1180px;
+}

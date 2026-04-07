@@ -242,6 +242,10 @@ else
     echo "    chmod +x $LOCAL_BIN/krull-claude"
 fi
 
+# --- Sentinel: mark setup complete so start.sh won't re-run it on every boot ---
+mkdir -p "$PROJECT_DIR/data"
+date -Iseconds > "$PROJECT_DIR/data/.setup-complete"
+
 echo ""
 echo "============================================"
 echo "  Setup complete!"

@@ -154,9 +154,27 @@ ENV_EOF
     fi
 fi
 
-# Ensure model and context have defaults if missing from .env
-grep -q '^OLLAMA_MODEL=' "$ENV_FILE" || echo "OLLAMA_MODEL=frob/qwen3.5-instruct:9b" >> "$ENV_FILE"
-grep -q '^OLLAMA_NUM_CTX=' "$ENV_FILE" || echo "OLLAMA_NUM_CTX=131072" >> "$ENV_FILE"
+# Ensure all canonical .env defaults are present so the Settings page in
+# Krull Home shows every known field pre-populated. Source of truth is
+# krull-home/server/lib/envSchema.ts — keep these in sync.
+# Idempotent: only appends missing keys; never overwrites user-set values.
+ensure_env_default() {
+    local key="$1"
+    local value="$2"
+    grep -q "^${key}=" "$ENV_FILE" || echo "${key}=${value}" >> "$ENV_FILE"
+}
+
+ensure_env_default OLLAMA_MODEL            "frob/qwen3.5-instruct:9b"
+ensure_env_default OLLAMA_NUM_CTX          "131072"
+ensure_env_default OLLAMA_TEMPERATURE      "0.8"
+ensure_env_default OLLAMA_TOP_P            "0.8"
+ensure_env_default OLLAMA_TOP_K            "20"
+ensure_env_default OLLAMA_PRESENCE_PENALTY "1.5"
+ensure_env_default CONTEXT_COMPACT_LIMIT   "98304"
+ensure_env_default WEBUI_SECRET_KEY        "changeme-generate-a-real-key"
+ensure_env_default LITELLM_MASTER_KEY      "sk-local-dev-key"
+ensure_env_default FAA_EDITION             "03-19-2026"
+# PHOTON_COUNTRY_CODE intentionally not defaulted — empty means worldwide coverage.
 
 # Source .env so we can use the values in this script
 set -a
@@ -218,21 +236,12 @@ fi
 
 echo ""
 
-# Only pull images if they haven't been pulled yet (first run)
-NEEDS_PULL=0
-while IFS= read -r img; do
-    if ! docker image inspect "$img" &>/dev/null; then
-        NEEDS_PULL=1
-        break
-    fi
-done < <(docker compose $COMPOSE_FILES config --images 2>/dev/null)
-
-if [ "$NEEDS_PULL" -eq 1 ]; then
-    echo "Pulling images (first run)..."
-    docker compose $COMPOSE_FILES pull
-else
-    echo "[+] All images present (use ./scripts/update.sh to pull latest)"
-fi
+# start.sh never updates images. It only starts what's already been
+# downloaded/built, plus brings up anything missing on first run
+# (docker compose up -d builds missing build-services and pulls missing
+# images automatically — but never touches existing ones).
+# Use ./scripts/update.sh to pull the latest versions explicitly.
+echo "[+] start.sh will not pull updates — use ./scripts/update.sh for that"
 
 # Ensure bind-mount directories exist with correct ownership
 mkdir -p "$PROJECT_DIR/data/ollama" "$PROJECT_DIR/data/webui" "$PROJECT_DIR/data/tiles" "$PROJECT_DIR/data/photon"
@@ -331,12 +340,26 @@ for svc in $SERVICES; do
     fi
 done
 
+# --- First boot: auto-run setup to provision filters + install krull-claude ---
+# The sentinel data/.setup-complete is written by setup.sh on success.
+# To force a re-run, delete it: rm data/.setup-complete && ./krull start
+if [ ! -f "$PROJECT_DIR/data/.setup-complete" ]; then
+    echo ""
+    echo "============================================"
+    echo "  First boot detected — running setup..."
+    echo "============================================"
+    echo ""
+    "$SCRIPT_DIR/setup.sh"
+fi
+
 echo ""
 echo "============================================"
 echo "  Krull AI is running!"
 echo ""
-echo "  Open WebUI:  http://localhost:3000"
-echo "  LiteLLM:     http://localhost:4000"
-echo "  Maps:        http://localhost:8070"
-echo "  Kiwix:       http://localhost:8090"
+echo "  ➜  Krull Home:  http://localhost:8000  (start here)"
+echo ""
+echo "  Open WebUI:     http://localhost:3000"
+echo "  LiteLLM:        http://localhost:4000"
+echo "  Maps:           http://localhost:8070"
+echo "  Kiwix:          http://localhost:8090"
 echo "============================================"
