@@ -289,19 +289,40 @@ _SYSTEM_REMINDER_RE = re.compile(
     r"<system-reminder>.*?</system-reminder>", re.DOTALL
 )
 
-# Claude Code wraps slash commands in XML tags, not bare. The actual
-# format observed in real traffic is:
+# Claude Code emits slash commands in TWO different shapes the proxy
+# needs to recognize, depending on conversation turn:
+#
+# Shape 1 — TURN 1 (initial slash command):
 #   <command-message>study-prep</command-message>
 #   <command-name>/study-prep</command-name>
 #   <command-args>translate How are you?</command-args>
-# So a "starts with /" check on the raw user message will never trip,
-# even after stripping system-reminder blocks. We need to detect the
-# <command-name> tag specifically.
+#   ... user input below ...
+# This is the user's original input, wrapped in XML tags.
+#
+# Shape 2 — TURN 2+ (loaded skill content, after Skill tool invoked):
+#   Base directory for this skill: /path/to/.claude/skills/study-prep
+#
+#   # Study Prep
+#   ... full SKILL.md content ...
+#
+#   ARGUMENTS: translate How are you?
+# This is a NEW USER MESSAGE Claude Code injects after the model invokes
+# the Skill tool — it carries the loaded skill's full content. The
+# original <command-name> tags are NOT present. We need a separate
+# detector for this shape so the directive can be re-injected here too,
+# otherwise the model sees the skill's surface docs ("for PDF files
+# only") on turn 2 with no countervailing instruction and refuses.
 _COMMAND_NAME_RE = re.compile(
     r"<command-name>\s*/([a-zA-Z][a-zA-Z0-9_-]*)\s*</command-name>"
 )
 _COMMAND_ARGS_RE = re.compile(
     r"<command-args>(.*?)</command-args>", re.DOTALL
+)
+_LOADED_SKILL_BASE_DIR_RE = re.compile(
+    r"Base directory for this skill:[^\n]*?/skills/([a-zA-Z][a-zA-Z0-9_-]*)"
+)
+_LOADED_SKILL_ARGUMENTS_RE = re.compile(
+    r"ARGUMENTS:\s*([^\n]*)"
 )
 
 
@@ -317,19 +338,39 @@ def _strip_system_reminders(content: str) -> str:
     return _SYSTEM_REMINDER_RE.sub("", content).strip()
 
 
-def _parse_slash_command(content: str) -> tuple[str, str] | None:
-    """If the user content contains a slash command (per Claude Code's
-    XML-tagged format), return (skill_name, args). Otherwise return None.
-    Strips system-reminder blocks first so the detection works against
-    the wrapped form Claude Code actually sends."""
+def _parse_slash_command(content: str) -> tuple[str, str, str] | None:
+    """If the user content represents a slash command in either of the
+    two shapes Claude Code uses, return (skill_name, args, shape).
+    Otherwise return None.
+
+    Shape "initial": <command-name>/X</command-name> (turn 1, user input)
+    Shape "loaded":  'Base directory for this skill: .../skills/X'
+                     (turn 2+, loaded skill content injected as a new
+                     user message after Skill is invoked)
+
+    The shape determines which directive template to use:
+      - initial → SLASH_COMMAND_PROTOCOL_TEMPLATE (forces Skill call)
+      - loaded  → SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE (forces procedure)
+    """
     cleaned = _strip_system_reminders(content)
+
+    # Shape "initial": original slash command (turn 1)
     name_match = _COMMAND_NAME_RE.search(cleaned)
-    if not name_match:
-        return None
-    skill_name = name_match.group(1)
-    args_match = _COMMAND_ARGS_RE.search(cleaned)
-    args = args_match.group(1).strip() if args_match else ""
-    return (skill_name, args)
+    if name_match:
+        skill_name = name_match.group(1)
+        args_match = _COMMAND_ARGS_RE.search(cleaned)
+        args = args_match.group(1).strip() if args_match else ""
+        return (skill_name, args, "initial")
+
+    # Shape "loaded": loaded skill content (turn 2+)
+    base_match = _LOADED_SKILL_BASE_DIR_RE.search(cleaned)
+    if base_match:
+        skill_name = base_match.group(1)
+        args_match = _LOADED_SKILL_ARGUMENTS_RE.search(cleaned)
+        args = args_match.group(1).strip() if args_match else ""
+        return (skill_name, args, "loaded")
+
+    return None
 
 
 def _is_plan_worthy_query(messages: list) -> bool:
@@ -397,14 +438,65 @@ SLASH_COMMAND_PROTOCOL_TEMPLATE = (
     "[End Krull Slash Command Protocol]"
 )
 
+# Used when the loaded skill content has just been injected (turn 2+
+# of a slash command workflow). At this point the model has ALREADY
+# invoked Skill — telling it to invoke Skill again would cause a loop.
+# Instead, the directive points the model at the procedure file and
+# tells it to follow it step by step, NOT to refuse based on a glance
+# at the skill's surface description.
+SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
+    "\n\n[Krull Skill Follow-Through]\n"
+    "The /{skill_name} skill content has just loaded. You have already "
+    "invoked Skill(skill=\"{skill_name}\"). Your job NOW is to follow "
+    "this skill's defined procedure for the user's request:\n"
+    "    {args}\n"
+    "\n"
+    "Procedure to follow:\n"
+    "  1. Look for a procedure file in the skill's references/ "
+    "directory (e.g. references/<mode>-procedure.md). Read it.\n"
+    "  2. Follow the procedure step by step. If the procedure says "
+    "to call a helper script (e.g. lib/<helper>.sh), call it via "
+    "Bash. If it says to read a reference file, read it.\n"
+    "  3. Each step uses real tool calls and real results. Cite the "
+    "actual content you got back, not training knowledge.\n"
+    "\n"
+    "Do NOT:\n"
+    "  - Refuse the user's input because the skill's surface "
+    "description (e.g. 'this is for course files') doesn't seem to "
+    "match perfectly. Try the procedure FIRST. The procedure may "
+    "handle your input fine.\n"
+    "  - Produce a final answer from training knowledge while "
+    "claiming you 'used the skill'. Use the procedure's actual tool "
+    "calls and cite their actual results.\n"
+    "  - Invent words, definitions, citations, or facts to fill "
+    "gaps. An honest 'the procedure does not appear to handle this "
+    "input — the skill may need an updated procedure file' is "
+    "always better than a fabricated answer.\n"
+    "\n"
+    "The procedure exists for a reason. Follow it.\n"
+    "[End Krull Skill Follow-Through]"
+)
+
 
 def inject_slash_command_protocol(messages: list) -> list:
-    """If the latest user message is a slash command, append the
-    Slash Command Protocol directive to the END of the user content.
+    """If the latest user message represents a slash command (in either
+    shape), append the appropriate directive to the END of the user
+    content.
+
+    Two shapes, two templates:
+      - "initial" (turn 1, original slash command): inject the
+        SLASH_COMMAND_PROTOCOL_TEMPLATE which forces Skill invocation
+        as the first action.
+      - "loaded" (turn 2+, loaded skill content message): inject the
+        SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE which tells the model to
+        follow the skill's procedure file step by step instead of
+        refusing based on the skill's surface description.
+
     End-of-message position is chosen because it's the highest-attention
-    slot — it's the last thing the model reads before deciding its
-    first action. Handles both string and list content formats.
-    Idempotent: skips if the directive is already present."""
+    slot — it's the last thing the model reads before deciding its next
+    action. Handles both string and list content formats. Idempotent:
+    skips if either directive marker is already present in the content.
+    """
     if not messages:
         return messages
     last_user_idx = None
@@ -420,19 +512,26 @@ def inject_slash_command_protocol(messages: list) -> list:
     parsed = _parse_slash_command(flat_text)
     if parsed is None:
         return messages
-    skill_name, args = parsed
+    skill_name, args, shape = parsed
 
-    # Idempotent: don't double-inject if the directive is already there
+    # Idempotent: don't double-inject either directive
     if "[Krull Slash Command Protocol]" in flat_text:
         return messages
+    if "[Krull Skill Follow-Through]" in flat_text:
+        return messages
 
-    # Escape any embedded quotes in args so the directive's example
-    # Skill call doesn't accidentally produce malformed JSON in the
-    # model's eyes.
+    # Pick the right template for this shape
     escaped_args = args.replace('"', '\\"')
-    directive = SLASH_COMMAND_PROTOCOL_TEMPLATE.format(
-        skill_name=skill_name, args=escaped_args
-    )
+    if shape == "initial":
+        directive = SLASH_COMMAND_PROTOCOL_TEMPLATE.format(
+            skill_name=skill_name, args=escaped_args
+        )
+        log_label = "+slash_command_protocol"
+    else:  # shape == "loaded"
+        directive = SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE.format(
+            skill_name=skill_name, args=escaped_args
+        )
+        log_label = "+slash_command_followthrough"
 
     # Modify the message in place, preserving the original content format
     new_msg = dict(messages[last_user_idx])
@@ -458,7 +557,7 @@ def inject_slash_command_protocol(messages: list) -> list:
     messages[last_user_idx] = new_msg
 
     print(
-        f"[FILTER] +slash_command_protocol (/{skill_name} → Skill, "
+        f"[FILTER] {log_label} (/{skill_name}, shape={shape}, "
         f"+{len(directive)} chars to user msg)",
         file=sys.stderr,
         flush=True,
@@ -1343,10 +1442,9 @@ KRULL_HOST_HOME = os.environ.get("KRULL_HOST_HOME", os.environ.get("HOME", "/roo
 # .claude/plans/sharded-hopping-canyon.md.
 KRULL_SHELL_RULES = (
     "[Krull Shell Rules — applies to every tool that takes a path]\n"
-    "1. PATHS WITH SPACES MUST BE DOUBLE-QUOTED. Many user paths (e.g. "
-    "Google Drive, Insync) contain spaces. Unquoted paths are word-split "
-    "by the shell and you get 'No such file or directory' on the first "
-    "fragment.\n"
+    "1. PATHS WITH SPACES MUST BE DOUBLE-QUOTED. Unquoted paths are "
+    "word-split by the shell and you get 'No such file or directory' "
+    "on the first fragment.\n"
     "2. The CORRECT pattern when calling a script with arguments via Bash "
     "is: bash \"/path with spaces/script.sh\" arg1 arg2 arg3\n"
     "   - The path is in its own quoted string.\n"
@@ -1927,8 +2025,21 @@ async def apply_filters(
     if ENABLE_DATE:
         messages = inject_date(messages)
     messages = inject_shell_rules(messages)
-    if _has_tool_named(tools, "TaskCreate"):
-        messages = inject_atomic_plan_rubric(messages)
+    # NOTE: atomic_plan_rubric injection (was triggered when TaskCreate is
+    # in the tool list) is DISABLED while we evaluate whether it's making
+    # the model behave worse. Symptom: the rubric tells the model
+    # "EXACTLY ONE TOOL CALL per task" + "look up one term at a time",
+    # which the model interprets as "decompose phrases into word-by-word
+    # lookups and read as few reference files as possible". Test case:
+    # /english-to-cw "How are you?" went from successfully calling
+    # cw-reverse-lookup.sh with the whole phrase (returning the canonical
+    # "qʰata mayka?" entry from the supplement) to calling it with
+    # ["how", "are", "you", "greeting"] and getting the buggy
+    # "are → suquamish-iliʔi" word-by-word result. The constant and
+    # function are still defined — re-enable by uncommenting the line
+    # below if the test shows the rubric was load-bearing somewhere.
+    # if _has_tool_named(tools, "TaskCreate"):
+    #     messages = inject_atomic_plan_rubric(messages)
     if has_tools:
         # Inject tool usage guidance so the model uses correct parameter names.
         # KEEP THIS AT POSITION 0 — see apply_filters docstring.
@@ -2476,6 +2587,33 @@ async def proxy(request: Request, path: str):
               f"ctx={NUM_CTX} temp={ollama_body['options'].get('temperature')} "
               f"top_p={ollama_body['options'].get('top_p')})",
               file=sys.stderr, flush=True)
+
+        # TEMPORARY FORENSIC: dump every message's role + length + start/end
+        # snippet so we can see exactly what the model is being given when
+        # it produces the wrong final answer. Especially: does the slash
+        # command directive persist into turn 2? Where does the loaded
+        # skill content live in the request structure?
+        print("[DEBUG-CONV] === full conversation dump ===", file=sys.stderr, flush=True)
+        for _i, _m in enumerate(chat_body["messages"]):
+            _role = _m.get("role", "?")
+            _c = _m.get("content", "")
+            if isinstance(_c, list):
+                _c = " ".join(_p.get("text", "") if isinstance(_p, dict) else str(_p) for _p in _c)
+            _c = str(_c) if _c is not None else ""
+            _len = len(_c)
+            _has_slash_dir = "[Krull Slash Command Protocol]" in _c
+            _has_cmd_tags = "<command-name>" in _c
+            _start = _c[:160].replace("\n", "\\n")
+            _end = _c[-160:].replace("\n", "\\n") if _len > 160 else ""
+            _flags = []
+            if _has_slash_dir: _flags.append("HAS_DIR")
+            if _has_cmd_tags: _flags.append("HAS_CMD_TAGS")
+            _flag_str = f" [{','.join(_flags)}]" if _flags else ""
+            print(f"[DEBUG-CONV]   msg[{_i}] role={_role} len={_len}{_flag_str}", file=sys.stderr, flush=True)
+            print(f"[DEBUG-CONV]     start: {_start!r}", file=sys.stderr, flush=True)
+            if _end:
+                print(f"[DEBUG-CONV]     end:   {_end!r}", file=sys.stderr, flush=True)
+        print("[DEBUG-CONV] === end dump ===", file=sys.stderr, flush=True)
 
         # Debug: log message roles and any tool_calls in messages
         for i, m in enumerate(chat_body["messages"]):
