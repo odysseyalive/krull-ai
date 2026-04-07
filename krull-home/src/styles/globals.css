@@ -959,6 +959,30 @@ button {
   font-size: 0.72rem;
   color: var(--ink-faint);
 }
+.bundle-card__phase {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin: 0;
+  min-height: 1em;
+}
+.bundle-card__phase:empty { display: none; }
+.bundle-card--installed {
+  border-left: 3px solid var(--ok);
+}
+.bundle-card__installed-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ok);
+  background: rgba(111, 191, 115, 0.1);
+  border: 1px solid rgba(111, 191, 115, 0.25);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  align-self: flex-start;
+}
 
 /* Package list */
 .pkg-list {

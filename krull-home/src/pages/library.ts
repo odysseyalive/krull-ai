@@ -5,9 +5,11 @@ import { toast } from "../components/Toast";
 import {
   deletePackage,
   fetchCatalog,
+  startBundleInstall,
   startInstall,
   streamJob,
   type Catalog,
+  type CatalogBundle,
   type CatalogPackage,
   type JobEvent,
   type PackageKind,
@@ -94,7 +96,53 @@ export async function LibraryPage(): Promise<HTMLElement> {
   }
 
   function renderPanel() {
-    panel.replaceChildren(buildKindPanel(catalog, current, handleInstall, handleDelete));
+    panel.replaceChildren(
+      buildKindPanel(catalog, current, handleInstall, handleDelete, handleBundleInstall),
+    );
+  }
+
+  async function handleBundleInstall(bundle: CatalogBundle) {
+    const card = panel.querySelector(
+      `.bundle-card[data-key="${cssEscape(bundle.key)}"]`,
+    ) as HTMLElement | null;
+    if (!card) return;
+    const button = card.querySelector("button") as HTMLButtonElement | null;
+    const phase = card.querySelector(".bundle-card__phase") as HTMLElement | null;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Starting…";
+    }
+    if (phase) phase.textContent = "Starting…";
+    try {
+      const { jobId } = await startBundleInstall(bundle.kind, bundle.key);
+      const stop = streamJob(jobId, (ev) => {
+        if (phase && ev.message) phase.textContent = ev.message;
+        if (button && typeof ev.percent === "number") {
+          button.textContent = `${ev.percent}%`;
+        }
+        if (ev.phase === "done") {
+          stop();
+          if (button) button.textContent = "Installed";
+          toast(`Installed bundle ${bundle.name}.`, "success");
+          void refreshCatalog();
+        } else if (ev.phase === "failed") {
+          stop();
+          if (button) {
+            button.disabled = false;
+            button.textContent = "Install all";
+          }
+          if (phase) phase.textContent = "";
+          toast(`Bundle install failed: ${ev.error ?? "unknown error"}`, "error", 6000);
+        }
+      });
+    } catch (err) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Install all";
+      }
+      if (phase) phase.textContent = "";
+      toast((err as Error).message, "error", 6000);
+    }
   }
 
   async function handleInstall(pkg: CatalogPackage) {
@@ -266,6 +314,7 @@ function buildKindPanel(
   kind: PackageKind,
   onInstall: (pkg: CatalogPackage) => void,
   onDelete: (pkg: CatalogPackage) => void,
+  onBundleInstall: (bundle: CatalogBundle) => void,
 ): HTMLElement {
   const panel = document.createElement("div");
   panel.className = "kind-panel";
@@ -285,8 +334,14 @@ function buildKindPanel(
 
     const bundleGrid = document.createElement("div");
     bundleGrid.className = "bundle-grid";
+    // Build a quick lookup of installed package keys so each bundle
+    // card can compute "X of N members installed" without scanning
+    // the whole package list per render.
+    const installedKeys = new Set(
+      catalog.packages.filter((p) => p.installed).map((p) => p.key),
+    );
     for (const bundle of bundles) {
-      bundleGrid.append(renderBundleCard(bundle));
+      bundleGrid.append(renderBundleCard(bundle, installedKeys, onBundleInstall));
     }
     bundleSection.append(bundleGrid);
     panel.append(bundleSection);
@@ -321,27 +376,64 @@ function buildKindPanel(
   return panel;
 }
 
-function renderBundleCard(bundle: import("../lib/api").CatalogBundle): HTMLElement {
+function renderBundleCard(
+  bundle: CatalogBundle,
+  installedKeys: Set<string>,
+  onInstall: (bundle: CatalogBundle) => void,
+): HTMLElement {
+  const total = bundle.members.length;
+  const installedCount = bundle.members.reduce(
+    (acc, k) => acc + (installedKeys.has(k) ? 1 : 0),
+    0,
+  );
+  const allInstalled = installedCount === total;
+  const someInstalled = installedCount > 0 && !allInstalled;
+
   const card = document.createElement("article");
-  card.className = "bundle-card";
+  card.className = `bundle-card${allInstalled ? " bundle-card--installed" : ""}`;
+  card.dataset.key = bundle.key;
+
   const title = document.createElement("h4");
   title.className = "bundle-card__title";
   title.textContent = bundle.name;
+
   const desc = document.createElement("p");
   desc.className = "bundle-card__desc";
   desc.textContent = bundle.description;
+
   const meta = document.createElement("div");
   meta.className = "bundle-card__meta";
   const size = document.createElement("span");
   size.textContent = bundle.size;
   const count = document.createElement("span");
-  count.textContent = `${bundle.members.length} packages`;
+  if (allInstalled) {
+    count.textContent = `${total} packages`;
+  } else if (someInstalled) {
+    count.textContent = `${installedCount} of ${total} installed`;
+  } else {
+    count.textContent = `${total} packages`;
+  }
   meta.append(size, count);
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn btn--ghost btn--sm";
-  btn.textContent = "Install all";
-  btn.disabled = true;
-  card.append(title, desc, meta, btn);
+
+  // Live status line — populated during install
+  const phase = document.createElement("p");
+  phase.className = "bundle-card__phase";
+
+  if (allInstalled) {
+    // Already complete — show a badge in place of the action button.
+    const badge = document.createElement("span");
+    badge.className = "bundle-card__installed-badge";
+    badge.textContent = "Installed";
+    card.append(title, desc, meta, phase, badge);
+  } else {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn--primary btn--sm";
+    btn.textContent = someInstalled
+      ? `Install ${total - installedCount} missing`
+      : "Install all";
+    btn.addEventListener("click", () => onInstall(bundle));
+    card.append(title, desc, meta, phase, btn);
+  }
   return card;
 }

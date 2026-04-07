@@ -1,7 +1,12 @@
 import { Router } from "express";
-import { loadCatalog, type CatalogPackage } from "../lib/catalog.js";
+import { loadCatalog, type CatalogPackage, type CatalogBundle } from "../lib/catalog.js";
 import { createJob, getJob } from "../lib/jobs.js";
-import { deletePackage, startInstall, affectedContainer } from "../lib/installer.js";
+import {
+  deletePackage,
+  startInstall,
+  startBundleInstall,
+  affectedContainer,
+} from "../lib/installer.js";
 import { restartContainer, isRestartable } from "../lib/docker.js";
 
 const router = Router();
@@ -25,6 +30,14 @@ async function findPackage(
   return catalog.packages.find((p) => p.kind === kind && p.key === key);
 }
 
+async function findBundle(
+  kind: string,
+  key: string,
+): Promise<CatalogBundle | undefined> {
+  const catalog = await loadCatalog(REPO);
+  return catalog.bundles.find((b) => b.kind === kind && b.key === key);
+}
+
 router.post("/library/install", async (req, res) => {
   const body = req.body as { kind?: string; key?: string } | undefined;
   if (!body || typeof body.kind !== "string" || typeof body.key !== "string") {
@@ -39,6 +52,22 @@ router.post("/library/install", async (req, res) => {
   const job = createJob(pkg.kind, pkg.key);
   startInstall(job, pkg);
   res.json({ jobId: job.id, kind: pkg.kind, key: pkg.key });
+});
+
+router.post("/library/install-bundle", async (req, res) => {
+  const body = req.body as { kind?: string; key?: string } | undefined;
+  if (!body || typeof body.kind !== "string" || typeof body.key !== "string") {
+    res.status(400).json({ error: "expected { kind, key }" });
+    return;
+  }
+  const bundle = await findBundle(body.kind, body.key);
+  if (!bundle) {
+    res.status(404).json({ error: `unknown bundle: ${body.kind}/${body.key}` });
+    return;
+  }
+  const job = createJob(`${bundle.kind}-bundle`, bundle.key);
+  startBundleInstall(job, bundle.key, bundle.members.length);
+  res.json({ jobId: job.id, kind: bundle.kind, key: bundle.key });
 });
 
 router.post("/library/delete", async (req, res) => {

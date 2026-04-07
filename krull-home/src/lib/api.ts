@@ -118,6 +118,19 @@ export async function startInstall(
   return (await res.json()) as { jobId: string };
 }
 
+export async function startBundleInstall(
+  kind: PackageKind,
+  key: string,
+): Promise<{ jobId: string }> {
+  const res = await fetch("/api/library/install-bundle", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind, key }),
+  });
+  if (!res.ok) throw new Error(`install bundle failed: ${await res.text()}`);
+  return (await res.json()) as { jobId: string };
+}
+
 export async function deletePackage(
   kind: PackageKind,
   key: string,

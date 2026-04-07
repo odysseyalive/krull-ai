@@ -152,6 +152,141 @@ export function startInstall(job: Job, pkg: CatalogPackage): void {
   });
 }
 
+/**
+ * Install a knowledge bundle by spawning download-knowledge.sh with the
+ * bundle name. The script knows how to expand bundles into their member
+ * packages and downloads them sequentially in one bash process. We
+ * parse stdout for the script's per-package "Downloading: ..." log
+ * lines to drive an "Installing X of N" progress display.
+ */
+export function startBundleInstall(
+  job: Job,
+  bundleKey: string,
+  totalCount: number,
+): void {
+  pushEvent(job, {
+    phase: "downloading",
+    percent: 0,
+    bytes: 0,
+    total: totalCount,
+    message: `Installing bundle ${bundleKey}…`,
+    timestamp: Date.now(),
+  });
+
+  const child = spawn("bash", ["scripts/download-knowledge.sh", bundleKey], {
+    cwd: REPO,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stderrTail = "";
+  let stdoutBuf = "";
+  // Track how many distinct packages have started so we can emit
+  // "Installing X of N: <desc>" updates as the bash script chews
+  // through the bundle.
+  let started = 0;
+
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+  });
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutBuf += chunk.toString();
+    let nl: number;
+    while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
+      const line = stdoutBuf.slice(0, nl);
+      stdoutBuf = stdoutBuf.slice(nl + 1);
+
+      // Lines like: [*] Downloading: Python standard library docs (4 MB)
+      const downloading = line.match(/^\[\*\] Downloading: (.+?) \(/);
+      if (downloading) {
+        started++;
+        pushEvent(job, {
+          phase: "downloading",
+          percent: totalCount
+            ? Math.round(((started - 1) / totalCount) * 100)
+            : undefined,
+          bytes: started - 1,
+          total: totalCount,
+          message: `Installing ${started} of ${totalCount}: ${downloading[1]}`,
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+
+      // Lines like: [+] Already downloaded: <desc> (<file>)
+      const cached = line.match(/^\[\+\] Already downloaded: (.+?) \(/);
+      if (cached) {
+        started++;
+        pushEvent(job, {
+          phase: "downloading",
+          percent: totalCount
+            ? Math.round((started / totalCount) * 100)
+            : undefined,
+          bytes: started,
+          total: totalCount,
+          message: `Already installed (${started} of ${totalCount}): ${cached[1]}`,
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+    }
+  });
+
+  child.on("close", async (code) => {
+    if (code !== 0) {
+      pushEvent(job, {
+        phase: "failed",
+        error: `download-knowledge.sh exited ${code}: ${stderrTail.trim().slice(-400)}`,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    pushEvent(job, {
+      phase: "downloading",
+      percent: 100,
+      bytes: totalCount,
+      total: totalCount,
+      message: "All packages downloaded",
+      timestamp: Date.now(),
+    });
+
+    // Bundles only exist for knowledge → always restart kiwix.
+    if (isRestartable("krull-kiwix")) {
+      pushEvent(job, {
+        phase: "restarting",
+        message: "Restarting krull-kiwix",
+        timestamp: Date.now(),
+      });
+      try {
+        await restartContainer("krull-kiwix");
+      } catch (err) {
+        pushEvent(job, {
+          phase: "failed",
+          error: `restart failed: ${(err as Error).message}`,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+    }
+
+    pushEvent(job, {
+      phase: "done",
+      message: `Installed bundle ${bundleKey}`,
+      timestamp: Date.now(),
+    });
+  });
+
+  child.on("error", (err) => {
+    pushEvent(job, {
+      phase: "failed",
+      error: `spawn failed: ${err.message}`,
+      timestamp: Date.now(),
+    });
+  });
+}
+
 export async function deletePackage(pkg: CatalogPackage): Promise<void> {
   const allowedDirs = ["zim", "data/tiles"];
   if (!allowedDirs.includes(pkg.targetDir)) {
