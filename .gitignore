@@ -24,6 +24,24 @@ zim/*.meta
 # Download tracker runtime state (live-updating; never commit)
 data/downloads/
 
+# Runtime state files tracked by mistake in earlier commits — untracked
+# with `git rm --cached` but kept on disk so the running stack keeps
+# writing its normal state.
+data/.install-log
+data/.setup-complete
+data/.update-log
+data/.update-status
+
+# Local work data — not part of the distribution
+data/aero-work/
+
+# Dev scratch at repo root: ad-hoc screenshots and playwright snapshot
+# dumps. Anchored to the repo root so app assets like
+# kiwix-front/favicon/*.png and map-viewer/public/sprites/*.png are
+# unaffected.
+/*.png
+/lib-snap.yml
+
 # Map viewer build artifacts
 map-viewer/node_modules/
 map-viewer/dist/
