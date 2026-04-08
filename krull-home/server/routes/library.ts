@@ -77,6 +77,26 @@ router.get("/library/queue", (_req, res) => {
   res.json(installQueue.snapshot());
 });
 
+router.get("/library/log", async (_req, res) => {
+  // Persistent log of every install/delete result, including failures.
+  // Survives container restarts and the in-memory job GC. Each line
+  // looks like: 2026-04-08T22:11:33.456Z FAIL knowledge/devdocs-react — <reason>
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const logPath = path.join(REPO, "data", ".install-log");
+    const text = await fs.readFile(logPath, "utf8");
+    res.type("text/plain").send(text);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT") {
+      res.type("text/plain").send("(no install log yet)");
+      return;
+    }
+    res.status(500).type("text/plain").send(`error reading log: ${e.message}`);
+  }
+});
+
 router.post("/library/delete", async (req, res) => {
   const body = req.body as { kind?: string; key?: string } | undefined;
   if (!body || typeof body.kind !== "string" || typeof body.key !== "string") {

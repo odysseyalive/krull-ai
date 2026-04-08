@@ -6,6 +6,8 @@
  */
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 export type JobPhase =
   | "queued"
@@ -61,6 +63,36 @@ export function pushEvent(job: Job, event: JobEvent): void {
   job.events.push(event);
   job.phase = event.phase;
   job.emitter.emit("event", event);
+
+  // Persist failures and completions to data/.install-log so the user
+  // can grep for "which package failed?" after the in-memory job has
+  // been GC'd or krull-home has been restarted. Successes are logged
+  // too because they're useful breadcrumbs for "what did I install
+  // last week?"
+  if (event.phase === "failed" || event.phase === "done") {
+    void appendInstallLog(job, event);
+  }
+}
+
+const REPO = process.env.KRULL_REPO ?? "/workspace";
+const INSTALL_LOG = path.join(REPO, "data", ".install-log");
+
+async function appendInstallLog(job: Job, event: JobEvent): Promise<void> {
+  try {
+    const ts = new Date(event.timestamp).toISOString();
+    const status = event.phase === "done" ? "OK  " : "FAIL";
+    const detail =
+      event.phase === "failed"
+        ? event.error ?? event.message ?? ""
+        : event.message ?? "";
+    const line = `${ts} ${status} ${job.kind}/${job.key} — ${detail}\n`;
+    // Use sync mkdir + appendFile to keep error handling simple — this
+    // is a write-and-forget side effect, not a critical path.
+    fs.mkdirSync(path.dirname(INSTALL_LOG), { recursive: true });
+    fs.appendFileSync(INSTALL_LOG, line);
+  } catch {
+    /* never fail the install because we couldn't write a log line */
+  }
 }
 
 /** Drop jobs that finished more than `ageMs` ago to prevent memory growth. */

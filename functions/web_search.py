@@ -14,7 +14,12 @@ from typing import Optional
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=1, description="Filter priority (lower runs first)"
+            default=2,
+            description=(
+                "Filter priority (lower runs first). Web search runs "
+                "AFTER kiwix_lookup so the user's curated offline "
+                "library gets the closer-to-question position."
+            ),
         )
         searxng_url: str = Field(
             default="http://krull-searxng:8080",
@@ -42,7 +47,13 @@ class Filter:
         if last_message.get("role") != "user":
             return body
 
-        query = last_message.get("content", "")
+        # Use the user's ORIGINAL query, not whatever previous inlet
+        # filters may have prepended. The first filter to run stashes
+        # the clean query on the body; subsequent filters read it back.
+        query = body.get("_krull_original_query")
+        if query is None:
+            query = last_message.get("content", "")
+            body["_krull_original_query"] = query
         if not query or len(query.strip()) < 3:
             return body
 
@@ -97,8 +108,13 @@ class Filter:
 
             search_context = "\n".join(context_lines)
 
+            # Prepend web results to the existing message content rather
+            # than overwrite it. This lets multiple inlet filters
+            # (kiwix_lookup, map_search) compose cleanly — whichever
+            # runs later sees the others' contributions and adds its own
+            # on top, instead of wiping them out.
             messages[-1]["content"] = (
-                f"{search_context}\nUser question: {query}"
+                f"{search_context}\n{messages[-1]['content']}"
             )
 
         except Exception:

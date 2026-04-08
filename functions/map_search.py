@@ -64,7 +64,13 @@ class Filter:
         if last_message.get("role") != "user":
             return body
 
-        query = last_message.get("content", "")
+        # Use the user's ORIGINAL query, not whatever previous inlet
+        # filters may have prepended. The first filter to run stashes
+        # the clean query on the body; subsequent filters read it back.
+        query = body.get("_krull_original_query")
+        if query is None:
+            query = last_message.get("content", "")
+            body["_krull_original_query"] = query
         if not query or len(query.strip()) < 3:
             return body
 
@@ -141,8 +147,10 @@ class Filter:
             context_lines.append("")
 
             map_context = "\n".join(context_lines)
+            # Prepend rather than replace so this filter composes
+            # cleanly with kiwix_lookup and web_search.
             messages[-1]["content"] = (
-                f"{map_context}\nUser question: {query}"
+                f"{map_context}\n{messages[-1]['content']}"
             )
 
         except Exception:
