@@ -74,3 +74,24 @@ export function gcJobs(ageMs = 60 * 60 * 1000): void {
 }
 
 setInterval(() => gcJobs(), 5 * 60 * 1000).unref();
+
+/**
+ * Wait until a job reaches a terminal phase (done | failed). Resolves
+ * regardless of outcome — the queue uses this to know when one runner
+ * is finished so it can move to the next.
+ */
+export function awaitJobTerminal(job: Job): Promise<void> {
+  return new Promise((resolve) => {
+    if (job.phase === "done" || job.phase === "failed") {
+      resolve();
+      return;
+    }
+    const onEvent = (ev: JobEvent) => {
+      if (ev.phase === "done" || ev.phase === "failed") {
+        job.emitter.off("event", onEvent);
+        resolve();
+      }
+    };
+    job.emitter.on("event", onEvent);
+  });
+}

@@ -108,39 +108,40 @@ export interface JobEvent {
 export async function startInstall(
   kind: PackageKind,
   key: string,
-): Promise<{ jobId: string }> {
+): Promise<{ jobId: string; position: number }> {
   const res = await fetch("/api/library/install", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind, key }),
   });
   if (!res.ok) throw new Error(`install failed: ${await res.text()}`);
-  return (await res.json()) as { jobId: string };
+  return (await res.json()) as { jobId: string; position: number };
 }
 
 export async function startBundleInstall(
   kind: PackageKind,
   key: string,
-): Promise<{ jobId: string }> {
+): Promise<{ jobId: string; position: number }> {
   const res = await fetch("/api/library/install-bundle", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind, key }),
   });
   if (!res.ok) throw new Error(`install bundle failed: ${await res.text()}`);
-  return (await res.json()) as { jobId: string };
+  return (await res.json()) as { jobId: string; position: number };
 }
 
 export async function deletePackage(
   kind: PackageKind,
   key: string,
-): Promise<void> {
+): Promise<{ jobId: string; position: number }> {
   const res = await fetch("/api/library/delete", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind, key }),
   });
   if (!res.ok) throw new Error(`delete failed: ${await res.text()}`);
+  return (await res.json()) as { jobId: string; position: number };
 }
 
 export interface RecommendedModel {

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { loadCatalog, type CatalogPackage, type CatalogBundle } from "../lib/catalog.js";
-import { createJob, getJob } from "../lib/jobs.js";
+import { createJob, getJob, pushEvent } from "../lib/jobs.js";
 import {
   deletePackage,
   startInstall,
@@ -8,6 +8,7 @@ import {
   affectedContainer,
 } from "../lib/installer.js";
 import { restartContainer, isRestartable } from "../lib/docker.js";
+import { installQueue } from "../lib/installQueue.js";
 
 const router = Router();
 const REPO = process.env.KRULL_REPO ?? "/workspace";
@@ -50,8 +51,8 @@ router.post("/library/install", async (req, res) => {
     return;
   }
   const job = createJob(pkg.kind, pkg.key);
-  startInstall(job, pkg);
-  res.json({ jobId: job.id, kind: pkg.kind, key: pkg.key });
+  const position = installQueue.enqueue(job, pkg.name, () => startInstall(job, pkg));
+  res.json({ jobId: job.id, kind: pkg.kind, key: pkg.key, position });
 });
 
 router.post("/library/install-bundle", async (req, res) => {
@@ -66,8 +67,14 @@ router.post("/library/install-bundle", async (req, res) => {
     return;
   }
   const job = createJob(`${bundle.kind}-bundle`, bundle.key);
-  void startBundleInstall(job, bundle.key, bundle.members.length, bundle.members);
-  res.json({ jobId: job.id, kind: bundle.kind, key: bundle.key });
+  const position = installQueue.enqueue(job, `${bundle.name} (bundle)`, () =>
+    startBundleInstall(job, bundle.key, bundle.members.length, bundle.members),
+  );
+  res.json({ jobId: job.id, kind: bundle.kind, key: bundle.key, position });
+});
+
+router.get("/library/queue", (_req, res) => {
+  res.json(installQueue.snapshot());
 });
 
 router.post("/library/delete", async (req, res) => {
@@ -85,27 +92,52 @@ router.post("/library/delete", async (req, res) => {
     res.status(400).json({ error: "package is not installed" });
     return;
   }
-  try {
-    await deletePackage(pkg);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-    return;
-  }
-  // Auto-restart the affected container so the service notices the file is gone.
-  const container = affectedContainer(pkg.kind);
-  let restarted = false;
-  if (container && isRestartable(container)) {
+
+  // Run deletes through the same queue as installs so a delete that
+  // races against an in-progress install doesn't restart kiwix in the
+  // middle of the install.
+  const job = createJob(`${pkg.kind}-delete`, pkg.key);
+  const position = installQueue.enqueue(job, `Delete ${pkg.name}`, async () => {
+    pushEvent(job, {
+      phase: "downloading",
+      message: `Deleting ${pkg.name}…`,
+      timestamp: Date.now(),
+    });
     try {
-      await restartContainer(container);
-      restarted = true;
+      await deletePackage(pkg);
     } catch (err) {
-      res.status(500).json({
-        error: `deleted ${pkg.file} but failed to restart ${container}: ${(err as Error).message}`,
+      pushEvent(job, {
+        phase: "failed",
+        error: (err as Error).message,
+        timestamp: Date.now(),
       });
       return;
     }
-  }
-  res.json({ ok: true, container, restarted });
+    const container = affectedContainer(pkg.kind);
+    if (container && isRestartable(container)) {
+      pushEvent(job, {
+        phase: "restarting",
+        message: `Restarting ${container}`,
+        timestamp: Date.now(),
+      });
+      try {
+        await restartContainer(container);
+      } catch (err) {
+        pushEvent(job, {
+          phase: "failed",
+          error: `deleted ${pkg.file} but failed to restart ${container}: ${(err as Error).message}`,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+    }
+    pushEvent(job, {
+      phase: "done",
+      message: `Deleted ${pkg.name}`,
+      timestamp: Date.now(),
+    });
+  });
+  res.json({ jobId: job.id, kind: pkg.kind, key: pkg.key, position });
 });
 
 router.get("/jobs/:id/stream", (req, res) => {

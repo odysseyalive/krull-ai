@@ -69,6 +69,20 @@ export async function LibraryPage(): Promise<HTMLElement> {
   const counts = countByKind(catalog);
   let current: PackageKind = "knowledge";
 
+  // Active-job counter — refreshCatalog only fires when this drops to
+  // zero. Without this, the first finished job would re-render the
+  // panel and tear down every other queued row mid-flight.
+  let activeJobs = 0;
+  function jobStarted() {
+    activeJobs++;
+  }
+  function jobEnded() {
+    activeJobs = Math.max(0, activeJobs - 1);
+    if (activeJobs === 0) {
+      void refreshCatalog();
+    }
+  }
+
   const buttons = new Map<PackageKind, HTMLButtonElement>();
   for (const tab of TABS) {
     const btn = document.createElement("button");
@@ -114,13 +128,17 @@ export async function LibraryPage(): Promise<HTMLElement> {
     card.classList.add("bundle-card--installing");
     if (button) {
       button.disabled = true;
-      button.textContent = "Starting…";
+      button.textContent = "Queued…";
     }
-    if (phase) phase.textContent = "Starting…";
+    if (phase) phase.textContent = "Queued…";
+    jobStarted();
     try {
       const { jobId } = await startBundleInstall(bundle.kind, bundle.key);
       const stop = streamJob(jobId, (ev) => {
         if (phase && ev.message) phase.textContent = ev.message;
+        if (ev.phase === "queued") {
+          if (button) button.textContent = ev.message ?? "Queued";
+        }
         if (typeof ev.percent === "number") {
           if (fill) fill.style.width = `${ev.percent}%`;
           if (pLabel) pLabel.textContent = `${ev.percent}%`;
@@ -131,21 +149,17 @@ export async function LibraryPage(): Promise<HTMLElement> {
           stop();
           if (button) button.textContent = "Installed";
           toast(`Installed bundle ${bundle.name}.`, "success");
-          void refreshCatalog();
+          jobEnded();
         } else if (ev.phase === "failed") {
           stop();
           toast(`Bundle install failed: ${ev.error ?? "unknown error"}`, "error", 6000);
-          // Refresh the catalog so the card re-renders with the
-          // correct missing-count and the right button text. We don't
-          // try to manually reset state here — refreshCatalog replaces
-          // the card element entirely.
           if (progress) void progress;
-          void refreshCatalog();
+          jobEnded();
         }
       });
     } catch (err) {
       toast((err as Error).message, "error", 6000);
-      void refreshCatalog();
+      jobEnded();
     }
   }
 
@@ -159,8 +173,9 @@ export async function LibraryPage(): Promise<HTMLElement> {
     row.classList.add("pkg-row--installing");
     if (button) {
       button.disabled = true;
-      button.textContent = "Starting…";
+      button.textContent = "Queued…";
     }
+    jobStarted();
     try {
       const { jobId } = await startInstall(pkg.kind, pkg.key);
       const stop = streamJob(jobId, (ev) => {
@@ -168,8 +183,7 @@ export async function LibraryPage(): Promise<HTMLElement> {
         if (ev.phase === "done") {
           stop();
           toast(`Installed ${pkg.name}.`, "success");
-          // Refetch catalog so the row reflects the new "Installed" state.
-          void refreshCatalog();
+          jobEnded();
         } else if (ev.phase === "failed") {
           stop();
           toast(`Install failed: ${ev.error ?? "unknown error"}`, "error", 6000);
@@ -178,6 +192,7 @@ export async function LibraryPage(): Promise<HTMLElement> {
             button.disabled = false;
             button.textContent = "Install";
           }
+          jobEnded();
         }
       });
     } catch (err) {
@@ -187,17 +202,50 @@ export async function LibraryPage(): Promise<HTMLElement> {
         button.disabled = false;
         button.textContent = "Install";
       }
+      jobEnded();
     }
   }
 
   async function handleDelete(pkg: CatalogPackage) {
     if (!confirmInline(pkg)) return;
+    const row = panel.querySelector(
+      `.pkg-row[data-key="${cssEscape(pkg.key)}"][data-kind="${pkg.kind}"]`,
+    ) as HTMLElement | null;
+    const button = row?.querySelector("button") as HTMLButtonElement | null;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Queued…";
+    }
+    jobStarted();
     try {
-      await deletePackage(pkg.kind, pkg.key);
-      toast(`Deleted ${pkg.name}.`, "success");
-      void refreshCatalog();
+      const { jobId } = await deletePackage(pkg.kind, pkg.key);
+      const stop = streamJob(jobId, (ev) => {
+        if (button) {
+          if (ev.phase === "queued") button.textContent = ev.message ?? "Queued";
+          else if (ev.phase === "downloading") button.textContent = "Deleting…";
+          else if (ev.phase === "restarting") button.textContent = "Restarting…";
+        }
+        if (ev.phase === "done") {
+          stop();
+          toast(`Deleted ${pkg.name}.`, "success");
+          jobEnded();
+        } else if (ev.phase === "failed") {
+          stop();
+          toast(`Delete failed: ${ev.error ?? "unknown error"}`, "error", 6000);
+          if (button) {
+            button.disabled = false;
+            button.textContent = "Delete";
+          }
+          jobEnded();
+        }
+      });
     } catch (err) {
       toast(`Delete failed: ${(err as Error).message}`, "error", 6000);
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Delete";
+      }
+      jobEnded();
     }
   }
 
@@ -240,7 +288,12 @@ function applyJobEvent(
   if (!button) return;
   switch (ev.phase) {
     case "queued":
-      button.textContent = "Queued";
+      // The queue worker emits queued events with messages like
+      // "Up next…" or "Queued (#3)". Show those verbatim so the user
+      // knows where they are in line.
+      button.textContent = ev.message ?? "Queued";
+      if (label) label.textContent = ev.message ?? "Queued";
+      if (fill) fill.style.width = "0%";
       break;
     case "downloading":
       button.textContent = ev.percent != null ? `${ev.percent}%` : "Downloading";
