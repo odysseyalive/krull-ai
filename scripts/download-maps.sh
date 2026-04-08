@@ -6,6 +6,11 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TILES_DIR="$PROJECT_DIR/data/tiles"
 PMTILES_BIN="$PROJECT_DIR/.local/bin/pmtiles"
 
+# Shared progress + error log helpers (see scripts/lib/download-log.sh).
+# shellcheck source=lib/download-log.sh
+source "$SCRIPT_DIR/lib/download-log.sh"
+export KRULL_DOWNLOAD_KIND=maps
+
 # Protomaps daily planet build (PMTiles format, supports HTTP range requests)
 PLANET_URL="${PROTOMAPS_PLANET_URL:-https://build.protomaps.com/20250324.pmtiles}"
 
@@ -284,8 +289,13 @@ download_base_tiles() {
 
     if [ "$REGION" = "planet" ]; then
         echo "Downloading full planet file (this will take a while)..."
-        curl -fSL -o "$TILES_DIR/$FILENAME" "$PLANET_URL" --progress-bar
+        dl_state_add "$TILES_DIR/$FILENAME" "$(dl_parse_size "$SIZE")"
+        dl_run_curl "$TILES_DIR/$FILENAME" "$PLANET_URL" --progress-bar
     else
+        # Regional extract via HTTP range requests — pmtiles extract
+        # does its own network I/O so we can't track precise byte
+        # progress, but we declare the target anyway for completeness.
+        dl_state_add "$TILES_DIR/$FILENAME" "$(dl_parse_size "$SIZE")"
         echo "Extracting $DESC region via HTTP range requests..."
         echo "Bounding box: $BBOX"
         echo ""
@@ -316,7 +326,8 @@ download_terrain() {
             rm "$TILES_DIR/$FILENAME"
         fi
 
-        curl -fSL -o "$TILES_DIR/$FILENAME" "$TERRAIN_GLOBAL_URL" --progress-bar
+        dl_state_add "$TILES_DIR/$FILENAME" 734003200  # ~700 MB
+        dl_run_curl "$TILES_DIR/$FILENAME" "$TERRAIN_GLOBAL_URL" --progress-bar
         echo ""
         echo "Download complete: $TILES_DIR/$FILENAME"
     else
@@ -429,8 +440,9 @@ download_nautical() {
             continue
         fi
 
+        dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
         echo "  Downloading $section (~${section_size_mb} MB)..."
-        if curl -fSL -o "$DEST.tmp" "$URL" --progress-bar; then
+        if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
             mv "$DEST.tmp" "$DEST"
             local actual_size
             actual_size="$(du -h "$DEST" | cut -f1)"
@@ -519,7 +531,8 @@ download_aeronautical() {
         # Download
         if [ ! -f "$ZIP_FILE" ]; then
             echo "  Downloading $chart..."
-            if ! curl -fSL -o "$ZIP_FILE.tmp" "$URL" --progress-bar; then
+            dl_state_add "$ZIP_FILE" 0  # FAA zips vary; no upfront size
+            if ! dl_run_curl "$ZIP_FILE.tmp" "$URL" --progress-bar; then
                 rm -f "$ZIP_FILE.tmp"
                 echo "  ✗ Failed to download $chart"
                 echo "    URL: $URL"
@@ -702,6 +715,33 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+# For any command that actually downloads data, open a state entry and
+# install an exit trap so the active slot is always cleared — even on
+# Ctrl-C or set -e aborts. The trap captures $? so the terminal status
+# reflects the actual exit code. list/status/remove bypass this.
+_dl_on_exit() {
+    local ec=$?
+    if [ -n "${DL_CURRENT_KEY:-}" ]; then
+        if [ "$ec" -ne 0 ]; then
+            dl_state_end failed || true
+        else
+            dl_state_end done || true
+        fi
+    fi
+}
+case "$1" in
+    list|status|remove)
+        ;;
+    --base-only|--terrain|--nautical|--aeronautical|--aero|--all)
+        trap _dl_on_exit EXIT
+        dl_state_begin maps "${2:-unknown}" "Maps: ${2:-unknown} ($1)"
+        ;;
+    *)
+        trap _dl_on_exit EXIT
+        dl_state_begin maps "$1" "Maps: $1 (full region)"
+        ;;
+esac
+
 case "$1" in
     list)
         cmd_list
@@ -807,7 +847,8 @@ case "$1" in
                     fi
                     echo "  Downloading $section (~${section_size_mb} MB)..."
                     local URL="${NCDS_BASE_URL}/${section}.mbtiles"
-                    if curl -fSL -o "$DEST.tmp" "$URL" --progress-bar; then
+                    dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
+                    if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
                         mv "$DEST.tmp" "$DEST"
                         echo "  ✓ $section complete"
                     else
@@ -898,7 +939,8 @@ case "$1" in
                     fi
                     echo "  Downloading $section (~${section_size_mb} MB)..."
                     local URL="${NCDS_BASE_URL}/${section}.mbtiles"
-                    if curl -fSL -o "$DEST.tmp" "$URL" --progress-bar; then
+                    dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
+                    if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
                         mv "$DEST.tmp" "$DEST"
                         echo "  ✓ $section complete"
                     else

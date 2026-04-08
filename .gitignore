@@ -18,6 +18,11 @@ searxng/
 
 # ZIM files (large offline knowledge archives)
 zim/*.zim
+# HEAD-probe sidecars left next to partial downloads
+zim/*.meta
+
+# Download tracker runtime state (live-updating; never commit)
+data/downloads/
 
 # Map viewer build artifacts
 map-viewer/node_modules/

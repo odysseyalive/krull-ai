@@ -10,6 +10,48 @@ import path from "node:path";
 import { restartContainer, isRestartable } from "./docker.js";
 import { loadCatalog as loadCatalogForCleanup, type CatalogPackage } from "./catalog.js";
 import { type Job, pushEvent } from "./jobs.js";
+import { readStateWithProgress, appendError } from "./downloadState.js";
+
+/**
+ * Files that are unrecoverable-corrupt — there's no way to fix them
+ * short of deleting and re-fetching. HTML 404 pages and wrong-magic
+ * files are the canonical examples: curl -C - would resume garbage.
+ *
+ * "truncated" is DELIBERATELY NOT in this set: curl -C - resumes
+ * truncated files cleanly, and the script's HEAD-probe (see
+ * _dl_probe_and_reconcile in download-log.sh) will wipe the partial
+ * if the upstream has drifted. Deleting truncated files blindly
+ * would force a full re-download from zero and waste hours of
+ * bandwidth on multi-GB ZIMs.
+ */
+const UNRECOVERABLE_CORRUPT = new Set(["html", "magic", "unreadable"]);
+
+/**
+ * Delete on-disk files for the given package keys IFF they exist and
+ * their current catalog entry flags them as unrecoverable-corrupt.
+ * Returns the list of cleaned keys (with reason tag) so the caller can
+ * surface it in the job event stream.
+ */
+async function preCleanCorrupt(keys: string[]): Promise<string[]> {
+  const cleaned: string[] = [];
+  try {
+    const catalog = await loadCatalogForCleanup(REPO);
+    for (const key of keys) {
+      const pkg = catalog.packages.find((p) => p.key === key);
+      if (!pkg) continue;
+      if (!pkg.corrupt || !UNRECOVERABLE_CORRUPT.has(pkg.corrupt)) continue;
+      const filePath = path.join(REPO, pkg.targetDir, pkg.file);
+      await fs.unlink(filePath).catch(() => {});
+      // Also wipe the HEAD-probe sidecar so the next run re-probes
+      // from scratch instead of trusting a stale ETag.
+      await fs.unlink(`${filePath}.meta`).catch(() => {});
+      cleaned.push(`${key} (${pkg.corrupt})`);
+    }
+  } catch {
+    /* Catalog scan failed — proceed without pre-clean. */
+  }
+  return cleaned;
+}
 
 const REPO = process.env.KRULL_REPO ?? "/workspace";
 
@@ -46,22 +88,43 @@ function scriptFor(kind: CatalogPackage["kind"]): string {
   }
 }
 
-export function startInstall(job: Job, pkg: CatalogPackage): void {
+export async function startInstall(job: Job, pkg: CatalogPackage): Promise<void> {
   const script = scriptFor(pkg.kind);
   const target = path.join(REPO, pkg.targetDir, pkg.file);
-  const expectedBytes = parseSize(pkg.size) ?? 0;
+
+  // Pre-clean any unrecoverable-corrupt leftovers for this single
+  // package before spawning the script, mirroring the bundle path's
+  // behavior. This lets a user click "Redownload" on a package whose
+  // previous attempt left behind an HTML 404 page and actually get a
+  // clean fetch instead of re-tripping the shortcircuit.
+  const cleaned = await preCleanCorrupt([pkg.key]);
+  if (cleaned.length > 0) {
+    pushEvent(job, {
+      phase: "downloading",
+      percent: 0,
+      bytes: 0,
+      total: parseSize(pkg.size) ?? 0,
+      message: `Cleaned corrupt file: ${cleaned.join(", ")}`,
+      timestamp: Date.now(),
+    });
+  }
 
   pushEvent(job, {
     phase: "downloading",
     percent: 0,
     bytes: 0,
-    total: expectedBytes,
+    total: parseSize(pkg.size) ?? 0,
     timestamp: Date.now(),
   });
 
   const child = spawn("bash", [script, pkg.key], {
     cwd: REPO,
-    env: process.env,
+    env: {
+      ...process.env,
+      KRULL_REPO: REPO,
+      KRULL_DOWNLOAD_JOB_ID: job.id,
+      KRULL_DOWNLOAD_KIND: pkg.kind,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -70,34 +133,47 @@ export function startInstall(job: Job, pkg: CatalogPackage): void {
     stderrTail = (stderrTail + chunk.toString()).slice(-2000);
   });
   child.stdout.on("data", () => {
-    /* swallow — progress is reported via file-size polling */
+    /* swallow — progress flows through downloadState.readStateWithProgress */
   });
 
+  // Poll the download-state file the script is writing. This gives us
+  // correct multi-file progress for free (maps + bundles) and does not
+  // assume a single target path. If the state file hasn't been written
+  // yet (script still starting up) we simply emit 0%.
   const poll = setInterval(async () => {
     try {
-      const st = await fs.stat(target);
-      const bytes = st.size;
-      const percent = expectedBytes
-        ? Math.min(99, Math.round((bytes / expectedBytes) * 100))
-        : undefined;
-      pushEvent(job, {
-        phase: "downloading",
-        percent,
-        bytes,
-        total: expectedBytes,
-        timestamp: Date.now(),
-      });
+      const snap = await readStateWithProgress();
+      if (snap.active && snap.active.jobId === job.id) {
+        pushEvent(job, {
+          phase: "downloading",
+          percent: snap.active.percent ?? undefined,
+          bytes: snap.active.bytes,
+          total: snap.active.total,
+          timestamp: Date.now(),
+        });
+      }
     } catch {
-      // file not yet present
+      /* ignore — state file not yet present */
     }
   }, 600);
 
   child.on("close", async (code) => {
     clearInterval(poll);
     if (code !== 0) {
+      const errMsg = `script exited ${code}: ${stderrTail.trim().slice(-400)}`;
+      await appendError({
+        kind: pkg.kind,
+        key: pkg.key,
+        file: pkg.file,
+        url: "",
+        httpStatus: null,
+        curlExit: code,
+        reason: errMsg,
+        source: "installer",
+      }).catch(() => {});
       pushEvent(job, {
         phase: "failed",
-        error: `script exited ${code}: ${stderrTail.trim().slice(-400)}`,
+        error: errMsg,
         timestamp: Date.now(),
       });
       return;
@@ -114,6 +190,16 @@ export function startInstall(job: Job, pkg: CatalogPackage): void {
       const validation = await validateDownload(target, pkg);
       if (!validation.ok) {
         await fs.unlink(target).catch(() => {});
+        await appendError({
+          kind: pkg.kind,
+          key: pkg.key,
+          file: pkg.file,
+          url: "",
+          httpStatus: null,
+          curlExit: null,
+          reason: validation.reason,
+          source: "installer-validation",
+        }).catch(() => {});
         pushEvent(job, {
           phase: "failed",
           error: validation.reason,
@@ -204,18 +290,6 @@ export async function startBundleInstall(
   const members: MemberInfo[] = [];
   try {
     const catalog = await loadCatalogForCleanup(REPO);
-
-    // Pre-clean: remove any corrupt files for members of this bundle
-    // BEFORE running the script. The script's [ -f ] "already downloaded"
-    // check would otherwise shortcircuit past corrupt files forever.
-    const cleaned: string[] = [];
-    // Only delete files that are UNRECOVERABLE corrupt — HTML error
-    // pages, wrong magic bytes, etc. NOT "truncated" files, because
-    // those are almost always valid in-progress downloads that curl
-    // can resume via its `-C -` flag. Deleting a truncated file would
-    // force a full re-download from zero and waste hours of bandwidth
-    // for a bundle full of multi-GB files.
-    const UNRECOVERABLE = new Set(["html", "magic"]);
     for (const key of memberKeys) {
       const pkg = catalog.packages.find((p) => p.key === key);
       if (!pkg) continue;
@@ -226,28 +300,36 @@ export async function startBundleInstall(
         filePath,
         expectedBytes: parseSize(pkg.size) ?? 0,
       });
-      if (pkg.corrupt && UNRECOVERABLE.has(pkg.corrupt)) {
-        await fs.unlink(filePath).catch(() => {});
-        cleaned.push(`${key} (${pkg.corrupt})`);
-      }
-    }
-    if (cleaned.length > 0) {
-      pushEvent(job, {
-        phase: "downloading",
-        percent: 0,
-        bytes: 0,
-        total: totalCount,
-        message: `Cleaned ${cleaned.length} corrupt file${cleaned.length === 1 ? "" : "s"}: ${cleaned.join(", ")}`,
-        timestamp: Date.now(),
-      });
     }
   } catch {
-    /* If catalog scan fails we proceed without pre-clean or polling */
+    /* If catalog scan fails we proceed without progress polling */
+  }
+
+  // Pre-clean unrecoverable-corrupt files BEFORE running the script.
+  // The shared helper handles the "why" — see preCleanCorrupt + the
+  // UNRECOVERABLE_CORRUPT set comment. Truncated files are preserved
+  // so curl -C - can resume them; the HEAD-probe in dl_run_curl will
+  // separately detect upstream drift and wipe stale partials.
+  const cleaned = await preCleanCorrupt(memberKeys);
+  if (cleaned.length > 0) {
+    pushEvent(job, {
+      phase: "downloading",
+      percent: 0,
+      bytes: 0,
+      total: totalCount,
+      message: `Cleaned ${cleaned.length} corrupt file${cleaned.length === 1 ? "" : "s"}: ${cleaned.join(", ")}`,
+      timestamp: Date.now(),
+    });
   }
 
   const child = spawn("bash", ["scripts/download-knowledge.sh", bundleKey], {
     cwd: REPO,
-    env: process.env,
+    env: {
+      ...process.env,
+      KRULL_REPO: REPO,
+      KRULL_DOWNLOAD_JOB_ID: job.id,
+      KRULL_DOWNLOAD_KIND: "knowledge",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

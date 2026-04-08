@@ -5,12 +5,16 @@ import { toast } from "../components/Toast";
 import {
   deletePackage,
   fetchCatalog,
+  fetchDownloadErrors,
+  fetchDownloadState,
   startBundleInstall,
   startInstall,
   streamJob,
   type Catalog,
   type CatalogBundle,
   type CatalogPackage,
+  type DownloadErrorEntry,
+  type DownloadStateSnapshot,
   type JobEvent,
   type PackageKind,
 } from "../lib/api";
@@ -46,8 +50,18 @@ export async function LibraryPage(): Promise<HTMLElement> {
   section.append(status);
 
   let catalog: Catalog;
+  let downloadState: DownloadStateSnapshot = { active: null, queue: [] };
   try {
-    catalog = await fetchCatalog();
+    // Fetch the catalog and the persistent download state in parallel.
+    // The download state tells us whether a previous download is still
+    // in progress (possibly on another tab or started from a CLI run)
+    // so we can re-hydrate the row's UI and resubscribe its SSE.
+    const [fetchedCatalog, fetchedState] = await Promise.all([
+      fetchCatalog(),
+      fetchDownloadState().catch(() => ({ active: null, queue: [] })),
+    ]);
+    catalog = fetchedCatalog;
+    downloadState = fetchedState;
   } catch (err) {
     status.textContent = `Failed to load catalog: ${(err as Error).message}`;
     return root;
@@ -57,6 +71,19 @@ export async function LibraryPage(): Promise<HTMLElement> {
   // ----- Disk usage strip -----
   const summary = renderSummary(catalog);
   section.append(summary);
+
+  // ----- Cross-tab download banner -----
+  // Shown when an active download is happening on a tab OTHER than the
+  // currently selected one, so the user knows the queue has something
+  // running even when they can't see it in the current panel.
+  const banner = document.createElement("div");
+  banner.className = "library-banner";
+  banner.style.display = "none";
+  section.append(banner);
+
+  // Track SSE subscriptions so a single streamJob attaches to each job
+  // exactly once, even if the user re-opens the same tab.
+  const activeStreams = new Map<string, () => void>();
 
   // ----- Tab strip -----
   const tabStrip = document.createElement("div");
@@ -113,7 +140,128 @@ export async function LibraryPage(): Promise<HTMLElement> {
     panel.replaceChildren(
       buildKindPanel(catalog, current, handleInstall, handleDelete, handleBundleInstall),
     );
+    applyDownloadStateToPanel();
+    updateBanner();
   }
+
+  /**
+   * Walk the current panel and mark any rows/cards that correspond to
+   * the active download or queued entries. Also resubscribes SSE for
+   * the active job so the button label continues to tick up. This is
+   * called after every panel render (tab switch) and after every state
+   * refresh (polling).
+   */
+  function applyDownloadStateToPanel() {
+    const { active, queue } = downloadState;
+
+    // Active download on the current tab → hydrate the row and
+    // resubscribe to its SSE stream.
+    if (active && active.kind === current) {
+      const row = panel.querySelector(
+        `.pkg-row[data-key="${cssEscape(active.key)}"][data-kind="${active.kind}"]`,
+      ) as HTMLElement | null;
+      if (row) {
+        row.classList.add("pkg-row--installing");
+        const button = row.querySelector("button") as HTMLButtonElement | null;
+        if (button) {
+          button.disabled = true;
+          button.textContent =
+            active.percent != null ? `${active.percent}%` : "Downloading…";
+        }
+        // Resubscribe SSE if we're not already streaming this job.
+        if (!activeStreams.has(active.jobId)) {
+          jobStarted();
+          const stop = streamJob(active.jobId, (ev) => {
+            applyJobEvent(ev, row, button);
+            if (ev.phase === "done" || ev.phase === "failed") {
+              activeStreams.get(active.jobId)?.();
+              activeStreams.delete(active.jobId);
+              jobEnded();
+            }
+          });
+          activeStreams.set(active.jobId, stop);
+        }
+      }
+      // Active bundle on the current tab.
+      const bundleCard = panel.querySelector(
+        `.bundle-card[data-key="${cssEscape(active.key)}"]`,
+      ) as HTMLElement | null;
+      if (bundleCard) {
+        bundleCard.classList.add("bundle-card--installing");
+        const btn = bundleCard.querySelector("button") as HTMLButtonElement | null;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent =
+            active.percent != null ? `${active.percent}%` : "Downloading…";
+        }
+      }
+    }
+
+    // Queued entries on the current tab → show "Queued (#N)" on the
+    // matching rows so the user knows they're already in line.
+    queue.forEach((q, idx) => {
+      if (q.kind !== current) return;
+      const row = panel.querySelector(
+        `.pkg-row[data-key="${cssEscape(q.key)}"][data-kind="${q.kind}"]`,
+      ) as HTMLElement | null;
+      if (row) {
+        row.classList.add("pkg-row--installing");
+        const button = row.querySelector("button") as HTMLButtonElement | null;
+        if (button) {
+          button.disabled = true;
+          const position = idx + (active ? 2 : 1);
+          button.textContent = `Queued (#${position})`;
+        }
+      }
+    });
+  }
+
+  /**
+   * Show a top-of-section banner when an active download is running on
+   * a tab other than the one currently selected. Gives the user a
+   * persistent hint that clicking Install on another tab will queue.
+   */
+  function updateBanner() {
+    const { active } = downloadState;
+    if (active && active.kind !== current) {
+      banner.style.display = "";
+      const pct = active.percent != null ? `${active.percent}%` : "downloading…";
+      banner.textContent =
+        `${capitalize(active.kind)} install in progress: ${active.name} (${pct}). ` +
+        `New installs on this tab will be queued.`;
+    } else {
+      banner.style.display = "none";
+      banner.textContent = "";
+    }
+  }
+
+  /**
+   * Poll the persistent download state every 2 seconds while the
+   * library page is mounted. This is the recovery mechanism for the
+   * case where the user navigated away mid-download: on return, the
+   * poll hydrates the row before any SSE events arrive.
+   */
+  async function refreshDownloadState() {
+    try {
+      const fresh = await fetchDownloadState();
+      downloadState = fresh;
+      applyDownloadStateToPanel();
+      updateBanner();
+    } catch {
+      /* ignore — endpoint may be momentarily unavailable */
+    }
+  }
+  const statePollId = window.setInterval(refreshDownloadState, 2000);
+  // Clean up polling when the page element is detached from the DOM.
+  const disconnectObserver = new MutationObserver(() => {
+    if (!document.body.contains(root)) {
+      window.clearInterval(statePollId);
+      for (const stop of activeStreams.values()) stop();
+      activeStreams.clear();
+      disconnectObserver.disconnect();
+    }
+  });
+  disconnectObserver.observe(document.body, { childList: true, subtree: true });
 
   async function handleBundleInstall(bundle: CatalogBundle) {
     const card = panel.querySelector(
@@ -122,9 +270,6 @@ export async function LibraryPage(): Promise<HTMLElement> {
     if (!card) return;
     const button = card.querySelector("button") as HTMLButtonElement | null;
     const phase = card.querySelector(".bundle-card__phase") as HTMLElement | null;
-    const progress = card.querySelector(".krull-progress") as HTMLElement | null;
-    const fill = card.querySelector(".krull-progress__fill") as HTMLElement | null;
-    const pLabel = card.querySelector(".krull-progress__label") as HTMLElement | null;
     card.classList.add("bundle-card--installing");
     if (button) {
       button.disabled = true;
@@ -140,11 +285,9 @@ export async function LibraryPage(): Promise<HTMLElement> {
           if (button) button.textContent = ev.message ?? "Queued";
         }
         if (typeof ev.percent === "number") {
-          if (fill) fill.style.width = `${ev.percent}%`;
-          if (pLabel) pLabel.textContent = `${ev.percent}%`;
           if (button) button.textContent = `${ev.percent}%`;
         }
-        if (ev.phase === "restarting" && pLabel) pLabel.textContent = "Restarting…";
+        if (ev.phase === "restarting" && button) button.textContent = "Restarting…";
         if (ev.phase === "done") {
           stop();
           if (button) button.textContent = "Installed";
@@ -153,7 +296,6 @@ export async function LibraryPage(): Promise<HTMLElement> {
         } else if (ev.phase === "failed") {
           stop();
           toast(`Bundle install failed: ${ev.error ?? "unknown error"}`, "error", 6000);
-          if (progress) void progress;
           jobEnded();
         }
       });
@@ -169,7 +311,6 @@ export async function LibraryPage(): Promise<HTMLElement> {
     ) as HTMLElement | null;
     if (!row) return;
     const button = row.querySelector("button") as HTMLButtonElement | null;
-    const bar = row.querySelector(".pkg-row__progress-bar") as HTMLElement | null;
     row.classList.add("pkg-row--installing");
     if (button) {
       button.disabled = true;
@@ -179,7 +320,7 @@ export async function LibraryPage(): Promise<HTMLElement> {
     try {
       const { jobId } = await startInstall(pkg.kind, pkg.key);
       const stop = streamJob(jobId, (ev) => {
-        applyJobEvent(ev, row, button, bar);
+        applyJobEvent(ev, row, button);
         if (ev.phase === "done") {
           stop();
           toast(`Installed ${pkg.name}.`, "success");
@@ -265,26 +406,62 @@ export async function LibraryPage(): Promise<HTMLElement> {
   selectTab("knowledge");
   section.append(tabStrip, panel);
 
+  // ----- Error log panel (collapsed by default) -----
+  const errorSection = document.createElement("details");
+  errorSection.className = "library-errors";
+  const errorSummary = document.createElement("summary");
+  errorSummary.className = "library-errors__summary";
+  errorSummary.textContent = "Download errors";
+  errorSection.append(errorSummary);
+  const errorList = document.createElement("div");
+  errorList.className = "library-errors__list";
+  errorSection.append(errorList);
+  section.append(errorSection);
+
+  async function loadErrors() {
+    try {
+      const errors = await fetchDownloadErrors(100);
+      if (errors.length === 0) {
+        errorSummary.textContent = "Download errors (none)";
+        errorList.textContent = "No download failures recorded.";
+        return;
+      }
+      errorSummary.textContent = `Download errors (${errors.length})`;
+      errorList.replaceChildren(...errors.map(renderErrorEntry));
+    } catch (err) {
+      errorList.textContent = `Failed to load error log: ${(err as Error).message}`;
+    }
+  }
+  errorSection.addEventListener("toggle", () => {
+    if (errorSection.open) void loadErrors();
+  });
+
   return root;
+}
+
+function renderErrorEntry(entry: DownloadErrorEntry): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "library-errors__entry";
+  const head = document.createElement("div");
+  head.className = "library-errors__head";
+  const ts = new Date(entry.timestamp).toLocaleString();
+  const status = entry.httpStatus != null ? ` HTTP ${entry.httpStatus}` : "";
+  head.textContent = `${ts} — ${entry.kind}/${entry.key}${status}`;
+  const url = document.createElement("code");
+  url.className = "library-errors__url";
+  url.textContent = entry.url || "(no url)";
+  const reason = document.createElement("div");
+  reason.className = "library-errors__reason";
+  reason.textContent = entry.reason;
+  row.append(head, url, reason);
+  return row;
 }
 
 function applyJobEvent(
   ev: JobEvent,
-  row: HTMLElement,
+  _row: HTMLElement,
   button: HTMLButtonElement | null,
-  bar: HTMLElement | null,
 ) {
-  // Update both the colored fill and the percent label.
-  const fill = row.querySelector(".krull-progress__fill") as HTMLElement | null;
-  const label = row.querySelector(".krull-progress__label") as HTMLElement | null;
-  if (typeof ev.percent === "number") {
-    if (fill) fill.style.width = `${ev.percent}%`;
-    if (label) label.textContent = `${ev.percent}%`;
-  }
-  // Older code paths used a `bar` arg directly — keep it in sync too.
-  if (bar && typeof ev.percent === "number") {
-    bar.style.width = `${ev.percent}%`;
-  }
   if (!button) return;
   switch (ev.phase) {
     case "queued":
@@ -292,16 +469,12 @@ function applyJobEvent(
       // "Up next…" or "Queued (#3)". Show those verbatim so the user
       // knows where they are in line.
       button.textContent = ev.message ?? "Queued";
-      if (label) label.textContent = ev.message ?? "Queued";
-      if (fill) fill.style.width = "0%";
       break;
     case "downloading":
       button.textContent = ev.percent != null ? `${ev.percent}%` : "Downloading";
       break;
     case "restarting":
       button.textContent = "Restarting";
-      if (fill) fill.style.width = "100%";
-      if (label) label.textContent = "Restarting…";
       break;
     case "done":
       button.textContent = "Installed";
@@ -322,6 +495,10 @@ function confirmInline(pkg: CatalogPackage): boolean {
 function cssEscape(s: string): string {
   // Minimal — covers our key format (alnum + dash).
   return s.replace(/"/g, '\\"');
+}
+
+function capitalize(s: string): string {
+  return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
 function countByKind(catalog: Catalog): Record<PackageKind, number> {
@@ -401,14 +578,15 @@ function buildKindPanel(
 
     const bundleGrid = document.createElement("div");
     bundleGrid.className = "bundle-grid";
-    // Build a quick lookup of installed package keys so each bundle
-    // card can compute "X of N members installed" without scanning
-    // the whole package list per render.
-    const installedKeys = new Set(
-      catalog.packages.filter((p) => p.installed).map((p) => p.key),
+    // Build a lookup of package records so each bundle card can check
+    // not just "installed" but also corrupt/partialBytes for each
+    // member — needed to render "Resume (X%)" on a bundle whose
+    // members include truncated files.
+    const packagesByKey = new Map(
+      catalog.packages.map((p) => [p.key, p] as const),
     );
     for (const bundle of bundles) {
-      bundleGrid.append(renderBundleCard(bundle, installedKeys, onBundleInstall));
+      bundleGrid.append(renderBundleCard(bundle, packagesByKey, onBundleInstall));
     }
     bundleSection.append(bundleGrid);
     panel.append(bundleSection);
@@ -445,16 +623,36 @@ function buildKindPanel(
 
 function renderBundleCard(
   bundle: CatalogBundle,
-  installedKeys: Set<string>,
+  packagesByKey: Map<string, CatalogPackage>,
   onInstall: (bundle: CatalogBundle) => void,
 ): HTMLElement {
   const total = bundle.members.length;
-  const installedCount = bundle.members.reduce(
-    (acc, k) => acc + (installedKeys.has(k) ? 1 : 0),
-    0,
-  );
+
+  // Walk every member and classify it — this drives both the card
+  // summary line and the action button label.
+  let installedCount = 0;
+  let truncatedCount = 0;
+  let unrecoverableCount = 0;
+  let partialBytes = 0;
+  let expectedBytes = 0;
+  for (const key of bundle.members) {
+    const pkg = packagesByKey.get(key);
+    if (!pkg) continue;
+    const exp = parseBundleMemberSize(pkg.size);
+    expectedBytes += exp;
+    if (pkg.installed) {
+      installedCount++;
+      partialBytes += pkg.installedSizeBytes ?? exp;
+    } else if (pkg.corrupt === "truncated" && pkg.partialBytes) {
+      truncatedCount++;
+      partialBytes += pkg.partialBytes;
+    } else if (pkg.corrupt) {
+      unrecoverableCount++;
+    }
+  }
   const allInstalled = installedCount === total;
   const someInstalled = installedCount > 0 && !allInstalled;
+  const hasPartials = truncatedCount > 0;
 
   const card = document.createElement("article");
   card.className = `bundle-card${allInstalled ? " bundle-card--installed" : ""}`;
@@ -475,8 +673,12 @@ function renderBundleCard(
   const count = document.createElement("span");
   if (allInstalled) {
     count.textContent = `${total} packages`;
+  } else if (someInstalled && hasPartials) {
+    count.textContent = `${installedCount} installed, ${truncatedCount} partial, ${total} total`;
   } else if (someInstalled) {
     count.textContent = `${installedCount} of ${total} installed`;
+  } else if (hasPartials) {
+    count.textContent = `${truncatedCount} partial, ${total} total`;
   } else {
     count.textContent = `${total} packages`;
   }
@@ -493,25 +695,44 @@ function renderBundleCard(
     badge.textContent = "Installed";
     card.append(title, desc, meta, phase, badge);
   } else {
-    // Progress strip lives between the phase line and the button so
-    // it's visually attached to the action when it appears.
-    const progress = document.createElement("div");
-    progress.className = "krull-progress bundle-card__progress";
-    const fill = document.createElement("div");
-    fill.className = "krull-progress__fill";
-    const pLabel = document.createElement("div");
-    pLabel.className = "krull-progress__label";
-    pLabel.textContent = "0%";
-    progress.append(fill, pLabel);
-
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn--primary btn--sm";
-    btn.textContent = someInstalled
-      ? `Install ${total - installedCount} missing`
-      : "Install all";
+
+    // Button label reflects the worst-case state of the bundle:
+    //   - any partial member   → "Resume (X%)"  + accent styling
+    //   - all missing          → "Install all"
+    //   - some fully installed → "Install N missing"
+    if (hasPartials && expectedBytes > 0) {
+      const pct = Math.min(99, Math.round((partialBytes / expectedBytes) * 100));
+      btn.textContent = `Resume (${pct}%)`;
+      btn.classList.add("btn--resume");
+    } else if (someInstalled) {
+      btn.textContent = `Install ${total - installedCount} missing`;
+    } else {
+      btn.textContent = "Install all";
+    }
+    if (unrecoverableCount > 0) {
+      btn.title = `${unrecoverableCount} member file${unrecoverableCount === 1 ? "" : "s"} corrupt and will be re-downloaded from scratch.`;
+    }
+
     btn.addEventListener("click", () => onInstall(bundle));
-    card.append(title, desc, meta, phase, progress, btn);
+    card.append(title, desc, meta, phase, btn);
   }
   return card;
+}
+
+/** parseBundleMemberSize mirrors dl_parse_size / parseSizeBytes. */
+function parseBundleMemberSize(s: string | undefined): number {
+  if (!s) return 0;
+  const m = s.match(/^\s*~?\s*([\d.]+)\s*([KMGT]?)B?/i);
+  if (!m) return 0;
+  const v = parseFloat(m[1]);
+  const u = (m[2] || "").toUpperCase();
+  const mult =
+    u === "T" ? 1024 ** 4 :
+    u === "G" ? 1024 ** 3 :
+    u === "M" ? 1024 ** 2 :
+    u === "K" ? 1024 : 1;
+  return Math.round(v * mult);
 }

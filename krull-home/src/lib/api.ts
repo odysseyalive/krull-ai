@@ -74,6 +74,10 @@ export interface CatalogPackage {
   category?: string;
   installed?: boolean;
   installedSizeBytes?: number;
+  /** Set when a file exists on disk but failed integrity inspection. */
+  corrupt?: string;
+  /** Bytes on disk for a corrupt/partial file, used to render Resume %. */
+  partialBytes?: number;
 }
 export interface CatalogBundle {
   kind: PackageKind;
@@ -215,6 +219,63 @@ export async function fetchUpdateStatus(signal?: AbortSignal): Promise<UpdateSta
   const res = await fetch("/api/update/status", { signal });
   if (!res.ok) throw new Error(`/api/update/status -> ${res.status}`);
   return (await res.json()) as UpdateStatus;
+}
+
+export interface DownloadManifestEntry {
+  path: string;
+  expectedBytes: number;
+}
+export interface ActiveDownload {
+  jobId: string;
+  kind: string;
+  key: string;
+  name: string;
+  phase: JobPhase;
+  startedAt: number;
+  updatedAt: number;
+  manifest: DownloadManifestEntry[];
+  bytes: number;
+  total: number;
+  percent: number | null;
+  message?: string;
+}
+export interface QueuedDownload {
+  jobId: string;
+  kind: string;
+  key: string;
+  name: string;
+  queuedAt: number;
+}
+export interface DownloadStateSnapshot {
+  active: ActiveDownload | null;
+  queue: QueuedDownload[];
+}
+
+export async function fetchDownloadState(): Promise<DownloadStateSnapshot> {
+  const res = await fetch("/api/library/downloads/state");
+  if (!res.ok) throw new Error(`/api/library/downloads/state -> ${res.status}`);
+  return (await res.json()) as DownloadStateSnapshot;
+}
+
+export interface DownloadErrorEntry {
+  timestamp: string;
+  kind: string;
+  key: string;
+  file: string;
+  url: string;
+  httpStatus: number | null;
+  curlExit: number | null;
+  reason: string;
+  source: string;
+}
+
+export async function fetchDownloadErrors(
+  limit = 200,
+): Promise<DownloadErrorEntry[]> {
+  const res = await fetch(`/api/library/downloads/errors?limit=${limit}`);
+  if (!res.ok) throw new Error(`/api/library/downloads/errors -> ${res.status}`);
+  const data = (await res.json()) as { entries: DownloadErrorEntry[] };
+  return data.entries;
 }
 
 export function streamJob(jobId: string, onEvent: (ev: JobEvent) => void): () => void {

@@ -25,6 +25,10 @@ export interface CatalogPackage {
   installedSizeBytes?: number;
   /** If a file exists on disk but failed format/integrity inspection */
   corrupt?: "html" | "magic" | "truncated" | "unreadable" | string;
+  /** Bytes currently on disk when the file is corrupt (esp. truncated)
+   *  so the UI can compute a "Resume (X%)" label against the expected
+   *  catalog size without having to stat the file itself. */
+  partialBytes?: number;
 }
 
 export interface CatalogBundle {
@@ -365,7 +369,10 @@ function prettyWikipediaName(key: string): string {
 async function inspectPackageFile(
   filePath: string,
   kind: PackageKind,
-): Promise<{ ok: true; sizeBytes: number } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; sizeBytes: number }
+  | { ok: false; reason: string; sizeBytes?: number }
+> {
   let stat;
   try {
     stat = await fs.stat(filePath);
@@ -377,18 +384,20 @@ async function inspectPackageFile(
   try {
     fh = await fs.open(filePath, "r");
   } catch {
-    return { ok: false, reason: "unreadable" };
+    return { ok: false, reason: "unreadable", sizeBytes: stat.size };
   }
   try {
     const head = Buffer.alloc(80);
     const { bytesRead } = await fh.read(head, 0, 80, 0);
-    if (bytesRead < 4) return { ok: false, reason: "truncated" };
+    if (bytesRead < 4) {
+      return { ok: false, reason: "truncated", sizeBytes: stat.size };
+    }
 
     // HTML 404 pages from a stale mirror look like text starting with
     // "<!DOCTYPE" or "<html" — reject those before any format checks.
     const headStr = head.slice(0, Math.min(bytesRead, 16)).toString("utf8");
     if (/^\s*<(?:!doctype|html)/i.test(headStr)) {
-      return { ok: false, reason: "html" };
+      return { ok: false, reason: "html", sizeBytes: stat.size };
     }
 
     if (kind === "knowledge" || kind === "wikipedia") {
@@ -399,14 +408,14 @@ async function inspectPackageFile(
         head[2] !== 0x4d ||
         head[3] !== 0x04
       ) {
-        return { ok: false, reason: "magic" };
+        return { ok: false, reason: "magic", sizeBytes: stat.size };
       }
       if (bytesRead >= 80) {
         // ZIM header offset 72: uint64 little-endian, position of the
         // trailing MD5 checksum block (16 bytes).
         const checksumPos = Number(head.readBigUInt64LE(72));
         if (stat.size < checksumPos + 16) {
-          return { ok: false, reason: "truncated" };
+          return { ok: false, reason: "truncated", sizeBytes: stat.size };
         }
       }
     }
@@ -417,7 +426,7 @@ async function inspectPackageFile(
         bytesRead < 7 ||
         head.slice(0, 7).toString("ascii") !== "PMTiles"
       ) {
-        return { ok: false, reason: "magic" };
+        return { ok: false, reason: "magic", sizeBytes: stat.size };
       }
     }
 
@@ -453,7 +462,10 @@ export async function loadCatalog(repo: string): Promise<Catalog> {
         // — it's important to surface this distinct state so the UI
         // can offer a re-install instead of pretending nothing's there.
         if (result.reason !== "missing") {
-          (pkg as CatalogPackage & { corrupt?: string }).corrupt = result.reason;
+          pkg.corrupt = result.reason;
+          if (typeof result.sizeBytes === "number") {
+            pkg.partialBytes = result.sizeBytes;
+          }
         }
       }
     }),

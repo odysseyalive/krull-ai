@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ZIM_DIR="$PROJECT_DIR/zim"
 
+# Shared progress + error log helpers. Writes data/downloads/state.json so
+# the library page can show live progress even across navigations, and
+# data/downloads/errors.jsonl so bad catalog URLs are queryable.
+# shellcheck source=lib/download-log.sh
+source "$SCRIPT_DIR/lib/download-log.sh"
+export KRULL_DOWNLOAD_KIND=knowledge
+
 echo "Knowledge Base Downloader for Krull AI"
 echo ""
 
@@ -279,19 +286,33 @@ download_package() {
     local filename
     filename=$(basename "$file")
 
+    # Compare on-disk size to the catalog's expected size. Only
+    # shortcircuit as "already downloaded" when the local file is at
+    # least as large as expected — otherwise fall through so curl -C -
+    # can resume a previous partial download. Without this check a
+    # 20 GB file interrupted at 873 MB would be reported as "already
+    # downloaded" and the bundle install would fail validation.
     if [ -f "$ZIM_DIR/$filename" ]; then
-        echo "[+] Already downloaded: $desc ($filename)"
-        return 0
+        local have_bytes want_bytes
+        have_bytes=$(stat -c%s "$ZIM_DIR/$filename" 2>/dev/null || stat -f%z "$ZIM_DIR/$filename" 2>/dev/null || echo 0)
+        want_bytes=$(dl_parse_size "$size")
+        # Allow a ~5% slack because catalog sizes are human-rounded
+        # ("20 GB") and the real file may be a bit smaller.
+        if [ "$want_bytes" -gt 0 ] && [ "$have_bytes" -ge "$((want_bytes * 95 / 100))" ]; then
+            echo "[+] Already downloaded: $desc ($filename)"
+            return 0
+        fi
+        echo "[~] Resuming partial download: $desc ($(($have_bytes / 1024 / 1024)) MB of $size)"
     fi
 
     echo "[*] Downloading: $desc ($size)"
     echo "    File: $filename"
 
-    # --fail makes curl exit non-zero on HTTP 4xx/5xx instead of saving
-    # the error response body as if it were the file. We then explicitly
-    # remove any partial file curl may have left behind so the next
-    # attempt isn't shortcircuited by the [ -f ] check above.
-    if ! curl --fail -L -C - -o "$ZIM_DIR/$filename" \
+    # Declare this file in the progress manifest so the library page
+    # can compute percent by stat-ing it. dl_run_curl wraps curl with
+    # --fail and logs bad URLs to errors.jsonl on failure.
+    dl_state_add "$ZIM_DIR/$filename" "$(dl_parse_size "$size")"
+    if ! dl_run_curl "$ZIM_DIR/$filename" \
         "https://download.kiwix.org/zim/$file" \
         --progress-bar; then
         rm -f "$ZIM_DIR/$filename"
@@ -324,6 +345,26 @@ done
 # Remove duplicates while preserving order
 PACKAGES=$(echo "$PACKAGES" | tr ' ' '\n' | awk '!seen[$0]++' | tr '\n' ' ')
 
+# Label the active entry with the first argument the user passed —
+# that way a bundle install shows up as the bundle name instead of
+# the first expanded member.
+DL_LABEL="$1"
+PKG_COUNT=$(echo "$PACKAGES" | wc -w | tr -d ' ')
+dl_state_begin knowledge "$DL_LABEL" "$DL_LABEL ($PKG_COUNT package$([ "$PKG_COUNT" != "1" ] && echo s))"
+
+# Ensure the state entry is always cleared on exit, even on Ctrl-C
+# or set -e aborts. Trap reads $? so the terminal status mirrors the
+# actual exit code.
+_dl_on_exit() {
+    local ec=$?
+    if [ "$ec" -ne 0 ]; then
+        dl_state_end failed || true
+    else
+        dl_state_end done || true
+    fi
+}
+trap _dl_on_exit EXIT
+
 FAIL=0
 for pkg in $PACKAGES; do
     download_package "$pkg" || FAIL=1
@@ -333,4 +374,6 @@ if [ "$FAIL" -eq 0 ]; then
     echo ""
     echo "All downloads complete. Restart Kiwix to load them:"
     echo "  docker restart krull-kiwix"
+else
+    exit 1
 fi

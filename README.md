@@ -49,6 +49,8 @@ You shouldn't have to change how you work just because the brain behind it is lo
 
 The start script checks all of these and tells you exactly what to install for your OS (Arch, Ubuntu, Fedora, macOS).
 
+Everything else — Node.js, bash scripts, model runtimes — ships inside the containers. `./krull download-*` commands are proxied into the `krull-home` container via `docker exec`, so you don't need Node or a Python runtime on the host.
+
 ### Clone and start
 
 ```bash

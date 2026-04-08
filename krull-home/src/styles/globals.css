@@ -807,6 +807,24 @@ button {
   border-color: var(--accent-2);
   color: var(--accent-2);
 }
+/* Resume: green-cast so partial downloads stand out from fresh installs */
+.btn--resume {
+  background: var(--accent-2);
+  color: var(--bg-deep);
+}
+.btn--resume:hover:not(:disabled) {
+  background: var(--accent);
+}
+/* Redownload: ghost variant with a warning accent — unrecoverable corruption */
+.btn--redownload {
+  background: transparent;
+  color: #e6b685;
+  border-color: #e6b685;
+}
+.btn--redownload:hover:not(:disabled) {
+  background: #e6b685;
+  color: var(--bg-deep);
+}
 
 /* ---------- Toasts ---------- */
 .toast-host {
@@ -1092,10 +1110,10 @@ button {
   letter-spacing: 0.04em;
 }
 
-/* Per-component activation: any of these classes on the parent unhides
- * the progress strip belonging to it. */
-.pkg-row--installing .krull-progress,
-.bundle-card--installing .krull-progress,
+/* Per-component activation: model pulls still show a progress strip
+ * because ollama gives us fine-grained byte events. The library page
+ * (pkg-row, bundle-card) deliberately does NOT reveal the progress
+ * bar — installs show percentages on the button label instead. */
 .model-card--pulling .krull-progress {
   display: flex;
 }
@@ -1124,9 +1142,71 @@ button {
 }
 
 /* Per-component placement tweaks */
-.pkg-row__progress { grid-column: 1 / -1; margin-top: 0.5rem; }
-.bundle-card__progress { margin: 0.25rem 0 0.4rem; }
 .model-card__progress { margin: 0.5rem 0 0; }
+
+/* ---------- Library: cross-tab banner + error log panel ---------- */
+.library-banner {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-deep);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+.library-errors {
+  margin: 2rem 0 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+}
+.library-errors__summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ink);
+  list-style: none;
+}
+.library-errors__summary::before {
+  content: "▶ ";
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.library-errors[open] > .library-errors__summary::before {
+  transform: rotate(90deg);
+}
+.library-errors__list {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+.library-errors__entry {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.library-errors__head {
+  font-family: var(--font-mono);
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  margin-bottom: 0.25rem;
+}
+.library-errors__url {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-2);
+  word-break: break-all;
+  margin-bottom: 0.25rem;
+}
+.library-errors__reason {
+  color: var(--ink);
+}
 .pkg-row__actions {
   display: flex;
   align-items: center;

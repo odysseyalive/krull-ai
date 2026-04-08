@@ -9,6 +9,10 @@ import {
 } from "../lib/installer.js";
 import { restartContainer, isRestartable } from "../lib/docker.js";
 import { installQueue } from "../lib/installQueue.js";
+import {
+  readStateWithProgress,
+  readErrors,
+} from "../lib/downloadState.js";
 
 const router = Router();
 const REPO = process.env.KRULL_REPO ?? "/workspace";
@@ -75,6 +79,41 @@ router.post("/library/install-bundle", async (req, res) => {
 
 router.get("/library/queue", (_req, res) => {
   res.json(installQueue.snapshot());
+});
+
+/**
+ * Persistent download snapshot with computed per-file progress. This
+ * is the endpoint the library page polls on mount (and every ~2s
+ * while visible) so it can display active downloads and queued
+ * entries across page navigations without relying on the SSE stream.
+ */
+router.get("/library/downloads/state", async (_req, res) => {
+  try {
+    const state = await readStateWithProgress();
+    res.json(state);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+/**
+ * Tail of data/downloads/errors.jsonl — parsed as a JSON array with
+ * the newest entries first. Used by the library page's error panel
+ * so users can spot stale upstream URLs without grepping the file.
+ */
+router.get("/library/downloads/errors", async (req, res) => {
+  try {
+    const limit = Math.min(
+      parseInt(String(req.query.limit ?? "200"), 10) || 200,
+      1000,
+    );
+    const entries = await readErrors(limit);
+    res.json({ entries });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
 });
 
 router.get("/library/log", async (_req, res) => {

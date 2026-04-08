@@ -41,4 +41,21 @@ if [ ! -f "$SCRIPT" ]; then
     exit 1
 fi
 
+# download-* scripts are run inside the krull-home container so they
+# reuse the container's toolchain (node, curl, bash) and write state
+# to data/downloads in a way that the web UI can observe. This keeps
+# the host requirements to "just Docker" — no python, no node on the
+# host. For every other command we keep running locally because they
+# need to invoke docker-compose, manage containers, etc.
+case "$COMMAND" in
+    download-wikipedia|download-knowledge|download-maps)
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx krull-home; then
+            echo "Error: the krull-home container is not running."
+            echo "Run './krull start' first, then re-run your download command."
+            exit 1
+        fi
+        exec docker exec -i krull-home bash "/workspace/scripts/$COMMAND.sh" "$@"
+        ;;
+esac
+
 exec "$SCRIPT" "$@"

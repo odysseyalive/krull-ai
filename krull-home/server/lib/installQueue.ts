@@ -15,10 +15,14 @@
  * of truth and the user can re-click).
  */
 import { type Job, pushEvent, awaitJobTerminal, getJob } from "./jobs.js";
+import { writeQueue, type QueuedDownload } from "./downloadState.js";
 
 interface QueueItem {
   jobId: string;
   label: string;
+  kind: string;
+  key: string;
+  queuedAt: number;
   runner: () => void | Promise<void>;
 }
 
@@ -34,7 +38,15 @@ class InstallQueue {
    */
   enqueue(job: Job, label: string, runner: () => void | Promise<void>): number {
     const position = this.queue.length + (this.currentJobId ? 1 : 0);
-    this.queue.push({ jobId: job.id, label, runner });
+    this.queue.push({
+      jobId: job.id,
+      label,
+      kind: job.kind,
+      key: job.key,
+      queuedAt: Date.now(),
+      runner,
+    });
+    this.syncQueueToDisk();
 
     // Tell the job (and any subscribers) where it sits in line.
     pushEvent(job, {
@@ -53,6 +65,25 @@ class InstallQueue {
     // event stream.
     void this.tick();
     return position;
+  }
+
+  /**
+   * Mirror the in-memory pending queue to data/downloads/state.json so
+   * the frontend can show "Queued (#N)" badges on other tabs even
+   * without an active SSE subscription. Fire-and-forget — a failure
+   * to write the on-disk mirror must never break the in-memory queue.
+   */
+  private syncQueueToDisk(): void {
+    const pending: QueuedDownload[] = this.queue.map((it) => ({
+      jobId: it.jobId,
+      kind: it.kind,
+      key: it.key,
+      name: it.label,
+      queuedAt: it.queuedAt,
+    }));
+    void writeQueue(pending).catch(() => {
+      /* never break the queue over a disk write */
+    });
   }
 
   /** Number of jobs ahead of `jobId` in the queue (excluding the running one). */
@@ -90,6 +121,7 @@ class InstallQueue {
     this.currentJobId = next.jobId;
     // Bump everyone behind us — they each move up one slot.
     this.broadcastPositions();
+    this.syncQueueToDisk();
 
     try {
       // The runner kicks off the actual work and may return synchronously
@@ -112,6 +144,7 @@ class InstallQueue {
 
     this.currentJobId = null;
     this.broadcastPositions();
+    this.syncQueueToDisk();
     void this.tick();
   }
 

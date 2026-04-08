@@ -1,5 +1,24 @@
 import { formatBytes, type CatalogPackage } from "../lib/api";
 
+/**
+ * Parse a human-readable size string like "20 GB" / "~65 MB" into bytes.
+ * Duplicated (in JS) from scripts/lib/download-log.sh's dl_parse_size so
+ * PackageRow can compute a Resume percentage without an extra API call.
+ */
+function parseSizeBytes(s: string | undefined): number {
+  if (!s) return 0;
+  const m = s.match(/^\s*~?\s*([\d.]+)\s*([KMGT]?)B?/i);
+  if (!m) return 0;
+  const v = parseFloat(m[1]);
+  const u = (m[2] || "").toUpperCase();
+  const mult =
+    u === "T" ? 1024 ** 4 :
+    u === "G" ? 1024 ** 3 :
+    u === "M" ? 1024 ** 2 :
+    u === "K" ? 1024 : 1;
+  return Math.round(v * mult);
+}
+
 export interface PackageRowOptions {
   pkg: CatalogPackage;
   onInstall?: (pkg: CatalogPackage) => void;
@@ -48,6 +67,10 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
   // (single ZIM file) the on-disk size is accurate and preferred.
   if (pkg.kind !== "maps" && pkg.installed && pkg.installedSizeBytes != null) {
     sizeLine.textContent = formatBytes(pkg.installedSizeBytes);
+  } else if (pkg.corrupt === "truncated" && pkg.partialBytes && pkg.size) {
+    // Show both the partial-on-disk and the catalog target so the user
+    // understands why the button says "Resume" and how much is left.
+    sizeLine.textContent = `${formatBytes(pkg.partialBytes)} / ${pkg.size}`;
   } else if (pkg.size) {
     sizeLine.textContent = pkg.size;
   }
@@ -71,10 +94,32 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
     }
     actions.append(del);
   } else {
+    // A file may exist on disk but be corrupt. Branch the button
+    // label on pkg.corrupt so the user knows what will happen:
+    //   "truncated"           → Resume (X%)  — curl -C - will continue
+    //   "html" / "magic" / … → Redownload   — installer will wipe + refetch
+    //   unset                 → Install     — fresh download
     const install = document.createElement("button");
     install.type = "button";
     install.className = "btn btn--primary btn--sm";
-    install.textContent = "Install";
+
+    if (pkg.corrupt === "truncated" && pkg.partialBytes) {
+      const total = parseSizeBytes(pkg.size);
+      if (total > 0) {
+        const pct = Math.min(99, Math.round((pkg.partialBytes / total) * 100));
+        install.textContent = `Resume (${pct}%)`;
+      } else {
+        install.textContent = `Resume (${formatBytes(pkg.partialBytes)})`;
+      }
+      install.classList.add("btn--resume");
+    } else if (pkg.corrupt) {
+      install.textContent = "Redownload";
+      install.classList.add("btn--redownload");
+      install.title = `Previous file was corrupt (${pkg.corrupt}); will be deleted and re-fetched.`;
+    } else {
+      install.textContent = "Install";
+    }
+
     install.disabled = !!disabled;
     if (!disabled && opts.onInstall) {
       install.addEventListener("click", () => opts.onInstall!(pkg));
@@ -84,17 +129,8 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
 
   meta.append(actions);
 
-  // Full-width progress strip — hidden until install starts. Spans both
-  // grid columns so it sits cleanly below the row content.
-  const progress = document.createElement("div");
-  progress.className = "krull-progress pkg-row__progress";
-  const fill = document.createElement("div");
-  fill.className = "krull-progress__fill";
-  const label = document.createElement("div");
-  label.className = "krull-progress__label";
-  label.textContent = "0%";
-  progress.append(fill, label);
-
-  row.append(info, meta, progress);
+  // Progress is conveyed entirely through the button's text label —
+  // the old colored progress bar was redundant and visually noisy.
+  row.append(info, meta);
   return row;
 }
