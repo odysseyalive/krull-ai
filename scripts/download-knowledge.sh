@@ -60,6 +60,8 @@ CATALOG=(
     "stackexchange-cooking|stack_exchange/cooking.stackexchange.com_en_all_2026-02.zim|Seasoned Advice cooking Q&A|237 MB"
     "stackexchange-outdoors|stack_exchange/outdoors.stackexchange.com_en_all_2026-02.zim|Outdoors & wilderness Q&A|142 MB"
     "stackexchange-gardening|stack_exchange/gardening.stackexchange.com_en_all_2026-02.zim|Gardening & landscaping Q&A|925 MB"
+    "stackexchange-linguistics|stack_exchange/linguistics.stackexchange.com_en_all_2026-02.zim|Linguistics Q&A (Sapir-Whorf, sociolinguistics, phonology)|82 MB"
+    "stackexchange-psychology|stack_exchange/psychology.stackexchange.com_en_all_2026-02.zim|Psychology & Cognitive Science Q&A|64 MB"
 
     # Survival & Self-Sufficiency
     "post-disaster|other/zimgit-post-disaster_en_2024-05.zim|Post-disaster survival library|645 MB"
@@ -84,6 +86,10 @@ CATALOG=(
     # Reference
     "wiktionary|wiktionary/wiktionary_en_all_nopic_2026-02.zim|English dictionary & thesaurus|8.2 GB"
 
+    # Anthropology & Humanities
+    "ted-anthropology|ted/ted_mul_anthropology_2026-01.zim|TED — Anthropology (talks & lectures)|635 MB"
+    "ted-archaeology|ted/ted_mul_archaeology_2026-01.zim|TED — Archaeology (dig sites, methodology)|301 MB"
+
     # Project Gutenberg (by Library of Congress category)
     "gutenberg|gutenberg/gutenberg_en_all_2025-11.zim|Project Gutenberg — all English books|206 GB"
     "gutenberg-fiction|gutenberg/gutenberg_en_lcc-pz_2026-03.zim|Gutenberg — Fiction & Juvenile|20 GB"
@@ -92,7 +98,10 @@ CATALOG=(
     "gutenberg-history|gutenberg/gutenberg_en_lcc-d_2026-03.zim|Gutenberg — World History|37 GB"
     "gutenberg-us-history|gutenberg/gutenberg_en_lcc-e_2026-03.zim|Gutenberg — US History|10 GB"
     "gutenberg-science|gutenberg/gutenberg_en_lcc-q_2026-03.zim|Gutenberg — Science|12 GB"
-    "gutenberg-philosophy|gutenberg/gutenberg_en_lcc-b_2026-03.zim|Gutenberg — Philosophy & Religion|14 GB"
+    # LoC class B bundles philosophy, psychology and religion together.
+    # Include all three in the label so culture-and-personality /
+    # psychological-anthropology traditions surface for the right users.
+    "gutenberg-philosophy|gutenberg/gutenberg_en_lcc-b_2026-03.zim|Gutenberg — Philosophy, Psychology & Religion|6 GB"
     "gutenberg-social-science|gutenberg/gutenberg_en_lcc-h_2026-03.zim|Gutenberg — Social Sciences|9.1 GB"
     "gutenberg-poetry|gutenberg/gutenberg_en_lcc-pq_2026-03.zim|Gutenberg — French/Italian/Spanish Lit|9.3 GB"
     "gutenberg-law|gutenberg/gutenberg_en_lcc-k_2026-03.zim|Gutenberg — Law|2.3 GB"
@@ -100,7 +109,10 @@ CATALOG=(
     "gutenberg-music|gutenberg/gutenberg_en_lcc-m_2026-03.zim|Gutenberg — Music|4.2 GB"
     "gutenberg-art|gutenberg/gutenberg_en_lcc-n_2026-03.zim|Gutenberg — Fine Arts|37 GB"
     "gutenberg-military|gutenberg/gutenberg_en_lcc-u_2026-03.zim|Gutenberg — Military Science|1.4 GB"
-    "gutenberg-geography|gutenberg/gutenberg_en_lcc-g_2026-03.zim|Gutenberg — Geography & Travel|5.1 GB"
+    # LoC class G bundles geography, anthropology, ethnology, archaeology,
+    # folklore and recreation together. Describe it accurately so users
+    # searching for anthropology actually find this package.
+    "gutenberg-geography|gutenberg/gutenberg_en_lcc-g_2026-03.zim|Gutenberg — Geography, Anthropology & Recreation|8.1 GB"
     "gutenberg-technology|gutenberg/gutenberg_en_lcc-t_2026-03.zim|Gutenberg — Technology|6.3 GB"
     "gutenberg-education|gutenberg/gutenberg_en_lcc-l_2026-03.zim|Gutenberg — Education|3.3 GB"
     "gutenberg-political|gutenberg/gutenberg_en_lcc-j_2026-03.zim|Gutenberg — Political Science|4.1 GB"
@@ -144,6 +156,18 @@ print_bundles() {
     echo "  gutenberg-stem    Science, technology, medicine (~22 GB)"
     echo "                    science, technology, medicine"
     echo ""
+    echo "  gutenberg-all-english  All 18 LoC categories as resumable pieces (~212 GB)"
+    echo "                    Equivalent to the 206 GB gutenberg monolith but"
+    echo "                    downloadable as 18 separate resumable files."
+    echo ""
+    echo "  anthropology      Cultural, archaeological, linguistic & psychological (~32 GB)"
+    echo "                    gutenberg-geography (LoC G: anthropology/ethnology/folklore),"
+    echo "                    gutenberg-social-science (Durkheim, Weber, functionalism),"
+    echo "                    gutenberg-philosophy (philosophy, psychology, religion),"
+    echo "                    ted-anthropology, ted-archaeology,"
+    echo "                    stackexchange-linguistics, stackexchange-psychology."
+    echo "                    For biological/physical anthropology install a Wikipedia package."
+    echo ""
 }
 
 get_bundle_keys() {
@@ -177,6 +201,24 @@ get_bundle_keys() {
             ;;
         gutenberg-stem)
             echo "gutenberg-science gutenberg-technology gutenberg-medicine"
+            ;;
+        gutenberg-all-english)
+            echo "gutenberg-fiction gutenberg-literature gutenberg-british-lit gutenberg-history gutenberg-us-history gutenberg-science gutenberg-philosophy gutenberg-social-science gutenberg-poetry gutenberg-law gutenberg-medicine gutenberg-music gutenberg-art gutenberg-military gutenberg-geography gutenberg-technology gutenberg-education gutenberg-political"
+            ;;
+        # anthropology bundle maps to the four-field model:
+        #   cultural/social → gutenberg-geography (LCC G: anthropology,
+        #                     ethnology, folklore) + gutenberg-social-science
+        #                     (LCC H: Durkheim/Weber/functionalism) + ted-anthropology
+        #   archaeological  → ted-archaeology + archaeology material inside LCC G
+        #   linguistic      → stackexchange-linguistics
+        #   psychological   → gutenberg-philosophy (LCC B: philosophy, psychology,
+        #                     religion) + stackexchange-psychology
+        # Biological/physical anthropology is not covered — no dedicated ZIM
+        # exists upstream; install a Wikipedia package for that subfield.
+        # NB: keep the case body a single echo with no blank lines or comments
+        # inline — catalog.ts parser regex requires `name)\n echo "...";;`.
+        anthropology)
+            echo "gutenberg-geography gutenberg-social-science gutenberg-philosophy ted-anthropology ted-archaeology stackexchange-linguistics stackexchange-psychology"
             ;;
         *)
             echo ""
@@ -239,6 +281,15 @@ print_usage() {
     for entry in "${CATALOG[@]}"; do
         IFS='|' read -r key file desc size <<< "$entry"
         case "$key" in wiktionary)
+            printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
+            ;;
+        esac
+    done
+    echo ""
+    echo "  Anthropology & Humanities:"
+    for entry in "${CATALOG[@]}"; do
+        IFS='|' read -r key file desc size <<< "$entry"
+        case "$key" in ted-*)
             printf "    %-25s %s (%s)\n" "$key" "$desc" "$size"
             ;;
         esac

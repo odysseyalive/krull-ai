@@ -1002,6 +1002,120 @@ button {
   align-self: flex-start;
 }
 
+/* ---- Bundle details (collapsible per-member list) ---- */
+.bundle-card__details {
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+.bundle-card__details-summary {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 0.25rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  list-style: none;
+}
+.bundle-card__details-summary::-webkit-details-marker { display: none; }
+.bundle-card__details-summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.bundle-card__details[open] .bundle-card__details-summary::before {
+  transform: rotate(90deg);
+}
+.bundle-card__details-summary:hover { color: var(--ink-dim); }
+
+.bundle-member-list {
+  list-style: none;
+  padding: 0.35rem 0 0 0;
+  margin: 0;
+  display: grid;
+  gap: 0.15rem;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+.bundle-member-row {
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "icon name status"
+    "bar  bar  bar";
+  column-gap: 0.6rem;
+  row-gap: 0.15rem;
+  align-items: center;
+  padding: 0.35rem 0.25rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+}
+.bundle-member-row:hover { background: rgba(255, 255, 255, 0.02); }
+.bundle-member-row__icon {
+  grid-area: icon;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.bundle-member-row__name {
+  grid-area: name;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bundle-member-row__status {
+  grid-area: status;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  text-align: right;
+  white-space: nowrap;
+}
+.bundle-member-row__bar {
+  grid-area: bar;
+  display: block;
+  height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 0.15rem;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.bundle-member-row__bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+/* Only show the bar while a row is downloading — other states don't
+   need the extra visual noise. */
+.bundle-member-row--downloading .bundle-member-row__bar { opacity: 1; }
+.bundle-member-row--downloading .bundle-member-row__bar-fill {
+  background: var(--accent-2);
+}
+
+/* Per-state coloring of icon + name */
+.bundle-member-row--installed .bundle-member-row__icon,
+.bundle-member-row--installed .bundle-member-row__status { color: var(--ok); }
+.bundle-member-row--partial .bundle-member-row__icon,
+.bundle-member-row--partial .bundle-member-row__status { color: var(--accent); }
+.bundle-member-row--corrupt .bundle-member-row__icon,
+.bundle-member-row--corrupt .bundle-member-row__status,
+.bundle-member-row--failed .bundle-member-row__icon,
+.bundle-member-row--failed .bundle-member-row__status { color: var(--danger, #e27070); }
+.bundle-member-row--queued .bundle-member-row__icon,
+.bundle-member-row--queued .bundle-member-row__status { color: var(--ink-faint); }
+.bundle-member-row--downloading .bundle-member-row__icon,
+.bundle-member-row--downloading .bundle-member-row__status { color: var(--accent-2); }
+.bundle-member-row--pending .bundle-member-row__icon { color: var(--ink-faint); }
+
 /* Package list */
 .pkg-list {
   display: grid;

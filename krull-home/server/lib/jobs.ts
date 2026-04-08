@@ -25,6 +25,16 @@ export interface JobEvent {
   message?: string;
   error?: string;
   timestamp: number;
+  /**
+   * Per-member fields for bundle installs. Present on events emitted
+   * while the bundle is processing a specific child package, so the
+   * UI can render a live "which member is which state" detail panel
+   * instead of just a single label. `memberKey` is the catalog key
+   * (e.g. "gutenberg-fiction") and `memberStatus` is the lifecycle
+   * phase of that single member.
+   */
+  memberKey?: string;
+  memberStatus?: "downloading" | "installed" | "failed";
 }
 
 export interface Job {

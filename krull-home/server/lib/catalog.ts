@@ -119,6 +119,8 @@ function parseKnowledge(text: string): {
     "cooking-essentials": "~360 MB",
     "gutenberg-essentials": "~65 GB",
     "gutenberg-stem": "~22 GB",
+    "gutenberg-all-english": "~212 GB",
+    anthropology: "~24 GB",
   };
   const bundleDescs: Record<string, string> = {
     "dev-essentials": "Core developer docs",
@@ -131,6 +133,10 @@ function parseKnowledge(text: string): {
     "cooking-essentials": "Cooking knowledge & recipes",
     "gutenberg-essentials": "Classic literature & reference",
     "gutenberg-stem": "Science, technology, medicine",
+    "gutenberg-all-english":
+      "All 18 Library of Congress categories as resumable pieces (equivalent to the 206 GB monolith, split by subject)",
+    anthropology:
+      "Cultural, archaeological, linguistic & psychological anthropology",
   };
   const caseRe = /(\S[\S-]*)\)\s*\n\s*echo\s+"([^"]+)"\s*;;/g;
   let caseMatch: RegExpExecArray | null;
@@ -327,6 +333,15 @@ function parseMaps(text: string): CatalogPackage[] {
 }
 
 function prettyName(key: string): string {
+  // TED keeps its all-caps brand when we strip the prefix. Handled
+  // before the generic title-caser runs so "TED" doesn't become "Ted".
+  if (key.startsWith("ted-")) {
+    const rest = key
+      .slice(4)
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return `TED — ${rest}`;
+  }
   return key
     .replace(/^devdocs-/, "")
     .replace(/^stackexchange-/, "Stack Exchange — ")

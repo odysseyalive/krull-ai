@@ -107,6 +107,10 @@ export interface JobEvent {
   message?: string;
   error?: string;
   timestamp: number;
+  /** Bundle-only: which member (catalog key) this event pertains to. */
+  memberKey?: string;
+  /** Bundle-only: lifecycle state of the single member identified by memberKey. */
+  memberStatus?: "downloading" | "installed" | "failed";
 }
 
 export async function startInstall(

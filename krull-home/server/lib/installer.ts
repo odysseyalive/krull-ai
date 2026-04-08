@@ -372,6 +372,8 @@ export async function startBundleInstall(
           bytes: currentIndex,
           total: totalCount,
           message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
+          memberKey: member.key,
+          memberStatus: "downloading",
           timestamp: Date.now(),
         });
       } catch {
@@ -405,6 +407,8 @@ export async function startBundleInstall(
           bytes: currentIndex,
           total: totalCount,
           message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
+          memberKey: members[currentIndex]?.key,
+          memberStatus: "downloading",
           timestamp: Date.now(),
         });
         startPolling();
@@ -424,6 +428,8 @@ export async function startBundleInstall(
           bytes: currentIndex + 1,
           total: totalCount,
           message: `Already installed (${currentIndex + 1} of ${totalCount}): ${currentLabel}`,
+          memberKey: members[currentIndex]?.key,
+          memberStatus: "installed",
           timestamp: Date.now(),
         });
         continue;
@@ -441,6 +447,25 @@ export async function startBundleInstall(
           bytes: currentIndex + 1,
           total: totalCount,
           message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
+          memberKey: members[currentIndex]?.key,
+          memberStatus: "installed",
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+
+      // Lines like: [-] Download failed: <filename> ...
+      const failed = line.match(/^\[-\] Download failed: /);
+      if (failed) {
+        stopPolling();
+        pushEvent(job, {
+          phase: "downloading",
+          percent: 0,
+          bytes: currentIndex,
+          total: totalCount,
+          message: `Failed: ${currentLabel}`,
+          memberKey: members[currentIndex]?.key,
+          memberStatus: "failed",
           timestamp: Date.now(),
         });
         continue;

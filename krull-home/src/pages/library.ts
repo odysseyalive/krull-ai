@@ -277,9 +277,33 @@ export async function LibraryPage(): Promise<HTMLElement> {
     }
     if (phase) phase.textContent = "Queued…";
     jobStarted();
+    // Seed every non-installed member row as "queued" so users see
+    // the whole pipeline lit up the moment they click install, not
+    // just the first member that the script reaches. Already-installed
+    // rows keep their ✓ state from the initial render.
+    card.querySelectorAll<HTMLElement>(
+      ".bundle-member-row:not(.bundle-member-row--installed)",
+    ).forEach((row) => {
+      row.className = row.className
+        .split(/\s+/)
+        .filter((c) => !c.startsWith("bundle-member-row--"))
+        .concat("bundle-member-row--queued")
+        .join(" ");
+      const icon = row.querySelector(".bundle-member-row__icon") as HTMLElement | null;
+      if (icon) icon.textContent = bundleMemberStatusIcon("queued");
+      const label = row.querySelector(
+        ".bundle-member-row__status",
+      ) as HTMLElement | null;
+      if (label) label.textContent = bundleMemberStatusLabel("queued", undefined);
+    });
+
     try {
       const { jobId } = await startBundleInstall(bundle.kind, bundle.key);
       const stop = streamJob(jobId, (ev) => {
+        // Route per-member events into the details panel. Top-level
+        // phase/message/percent updates still drive the summary row.
+        updateBundleMemberRow(card, ev);
+
         if (phase && ev.message) phase.textContent = ev.message;
         if (ev.phase === "queued") {
           if (button) button.textContent = ev.message ?? "Queued";
@@ -688,12 +712,40 @@ function renderBundleCard(
   const phase = document.createElement("p");
   phase.className = "bundle-card__phase";
 
+  // ---- Collapsible per-member details panel ----
+  //
+  // Each member becomes a row showing its current state so the user can
+  // see at a glance which pieces are done, which are partial, which are
+  // corrupt, and (once install starts) which is actively downloading.
+  // The state here is seeded from the static catalog, then updated live
+  // by handleBundleInstall's SSE handler via updateBundleMemberRow().
+  const details = document.createElement("details");
+  details.className = "bundle-card__details";
+  const summary = document.createElement("summary");
+  summary.className = "bundle-card__details-summary";
+  summary.textContent = `Show ${total} members`;
+  details.append(summary);
+
+  const memberList = document.createElement("ul");
+  memberList.className = "bundle-member-list";
+  for (const key of bundle.members) {
+    const pkg = packagesByKey.get(key);
+    let initial: BundleMemberStatus;
+    if (!pkg) initial = "missing";
+    else if (pkg.installed) initial = "installed";
+    else if (pkg.corrupt === "truncated" && pkg.partialBytes) initial = "partial";
+    else if (pkg.corrupt) initial = "corrupt";
+    else initial = "pending";
+    memberList.append(renderBundleMemberRow(key, pkg, initial));
+  }
+  details.append(memberList);
+
   if (allInstalled) {
     // Already complete — show a badge in place of the action button.
     const badge = document.createElement("span");
     badge.className = "bundle-card__installed-badge";
     badge.textContent = "Installed";
-    card.append(title, desc, meta, phase, badge);
+    card.append(title, desc, meta, phase, details, badge);
   } else {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -717,9 +769,150 @@ function renderBundleCard(
     }
 
     btn.addEventListener("click", () => onInstall(bundle));
-    card.append(title, desc, meta, phase, btn);
+    card.append(title, desc, meta, phase, details, btn);
   }
   return card;
+}
+
+type BundleMemberStatus =
+  | "installed"     // ✓ fully on disk and valid
+  | "partial"       // ⟳ truncated, resumable
+  | "corrupt"       // ✗ corrupt, will be wiped
+  | "pending"       // ○ not yet attempted
+  | "queued"        // … next in line (set when install starts)
+  | "downloading"   // ⏳ active
+  | "failed"        // ✗ failed this session
+  | "missing";      // ? not in catalog (shouldn't happen)
+
+function bundleMemberStatusIcon(s: BundleMemberStatus): string {
+  switch (s) {
+    case "installed": return "✓";
+    case "partial": return "⟳";
+    case "corrupt": return "✗";
+    case "pending": return "○";
+    case "queued": return "…";
+    case "downloading": return "⏳";
+    case "failed": return "✗";
+    case "missing": return "?";
+  }
+}
+
+function bundleMemberStatusLabel(
+  s: BundleMemberStatus,
+  pkg: CatalogPackage | undefined,
+): string {
+  switch (s) {
+    case "installed": return "Installed";
+    case "partial": {
+      // Show a resume percent if we can compute one.
+      const exp = parseBundleMemberSize(pkg?.size);
+      if (pkg?.partialBytes && exp > 0) {
+        const pct = Math.min(99, Math.round((pkg.partialBytes / exp) * 100));
+        return `Resume (${pct}%)`;
+      }
+      return "Partial";
+    }
+    case "corrupt": return `Corrupt (${pkg?.corrupt ?? "unknown"})`;
+    case "pending": return "Not installed";
+    case "queued": return "Queued";
+    case "downloading": return "Downloading";
+    case "failed": return "Failed";
+    case "missing": return "Missing from catalog";
+  }
+}
+
+function renderBundleMemberRow(
+  key: string,
+  pkg: CatalogPackage | undefined,
+  status: BundleMemberStatus,
+): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = `bundle-member-row bundle-member-row--${status}`;
+  li.dataset.memberKey = key;
+
+  const icon = document.createElement("span");
+  icon.className = "bundle-member-row__icon";
+  icon.textContent = bundleMemberStatusIcon(status);
+
+  const name = document.createElement("span");
+  name.className = "bundle-member-row__name";
+  // Strip the common "Brand — " prefix from the display name. Inside a
+  // bundle card whose title is already "Gutenberg — All English",
+  // seeing "Gutenberg — Fiction" / "Gutenberg — Philosophy" wastes
+  // every row's first 12 characters on the same redundant prefix.
+  // Full name is retained in the tooltip so nothing is lost.
+  const fullName = pkg?.name ?? key;
+  const shortName = fullName.includes(" — ")
+    ? fullName.slice(fullName.indexOf(" — ") + 3)
+    : fullName;
+  name.textContent = shortName;
+  name.title = `${fullName}${pkg?.size ? ` — ${pkg.size}` : ""}`;
+
+  const label = document.createElement("span");
+  label.className = "bundle-member-row__status";
+  label.textContent = bundleMemberStatusLabel(status, pkg);
+
+  // Thin progress bar used while this member is `downloading`. We set
+  // width=0 by default; handleBundleInstall updates it via CSS var.
+  const bar = document.createElement("span");
+  bar.className = "bundle-member-row__bar";
+  const barFill = document.createElement("span");
+  barFill.className = "bundle-member-row__bar-fill";
+  bar.append(barFill);
+
+  li.append(icon, name, label, bar);
+  return li;
+}
+
+/**
+ * Apply a streaming JobEvent to a bundle card's per-member rows. Called
+ * from handleBundleInstall whenever an event arrives for the active
+ * bundle. Idempotent: running out-of-order events won't corrupt state,
+ * because events carry both `memberKey` and `memberStatus` and we only
+ * mutate the row they target.
+ *
+ * Side effect: if memberStatus is "downloading", we also update the
+ * per-row progress bar from ev.percent.
+ */
+function updateBundleMemberRow(card: HTMLElement, ev: JobEvent): void {
+  if (!ev.memberKey) return;
+  const row = card.querySelector(
+    `.bundle-member-row[data-member-key="${cssEscape(ev.memberKey)}"]`,
+  ) as HTMLElement | null;
+  if (!row) return;
+
+  const newStatus: BundleMemberStatus | null =
+    ev.memberStatus === "installed" ? "installed" :
+    ev.memberStatus === "downloading" ? "downloading" :
+    ev.memberStatus === "failed" ? "failed" :
+    null;
+  if (!newStatus) return;
+
+  // Strip any previous status class and re-apply the new one.
+  row.className = row.className
+    .split(/\s+/)
+    .filter((c) => !c.startsWith("bundle-member-row--"))
+    .concat(`bundle-member-row--${newStatus}`)
+    .join(" ");
+
+  const icon = row.querySelector(".bundle-member-row__icon") as HTMLElement | null;
+  if (icon) icon.textContent = bundleMemberStatusIcon(newStatus);
+
+  const label = row.querySelector(".bundle-member-row__status") as HTMLElement | null;
+  if (label) label.textContent = bundleMemberStatusLabel(newStatus, undefined);
+
+  const barFill = row.querySelector(
+    ".bundle-member-row__bar-fill",
+  ) as HTMLElement | null;
+  if (barFill) {
+    if (newStatus === "downloading" && typeof ev.percent === "number") {
+      barFill.style.width = `${Math.max(0, Math.min(100, ev.percent))}%`;
+    } else if (newStatus === "installed") {
+      barFill.style.width = "100%";
+    } else if (newStatus === "failed") {
+      barFill.style.width = "0%";
+    }
+  }
 }
 
 /** parseBundleMemberSize mirrors dl_parse_size / parseSizeBytes. */
