@@ -62,6 +62,31 @@ CATALOG=(
     "stackexchange-gardening|stack_exchange/gardening.stackexchange.com_en_all_2026-02.zim|Gardening & landscaping Q&A|925 MB"
     "stackexchange-linguistics|stack_exchange/linguistics.stackexchange.com_en_all_2026-02.zim|Linguistics Q&A (Sapir-Whorf, sociolinguistics, phonology)|82 MB"
     "stackexchange-psychology|stack_exchange/psychology.stackexchange.com_en_all_2026-02.zim|Psychology & Cognitive Science Q&A|64 MB"
+    "stackexchange-latin|stack_exchange/latin.stackexchange.com_mul_all_2026-02.zim|Latin Stack Exchange — grammar, translation, classical philology Q&A|54 MB"
+    "stackexchange-literature|stack_exchange/literature.stackexchange.com_en_all_2026-02.zim|Literature Stack Exchange — textual analysis and interpretation Q&A|68 MB"
+    "stackexchange-history|stack_exchange/history.stackexchange.com_en_all_2026-02.zim|History Stack Exchange — sourcing, historiography, period-specific Q&A|304 MB"
+    "stackexchange-hsm|stack_exchange/hsm.stackexchange.com_en_all_2026-02.zim|History of Science and Mathematics Stack Exchange|49 MB"
+    "stackexchange-law|stack_exchange/law.stackexchange.com_en_all_2026-02.zim|Law Stack Exchange — doctrinal, comparative, procedural Q&A|176 MB"
+    "stackexchange-music|stack_exchange/music.stackexchange.com_en_all_2026-02.zim|Music Stack Exchange — theory, performance, composition Q&A|323 MB"
+    "stackexchange-philosophy|stack_exchange/philosophy.stackexchange.com_en_all_2026-02.zim|Philosophy Stack Exchange — epistemology, metaphysics, ethics Q&A|198 MB"
+    "stackexchange-hinduism|stack_exchange/hinduism.stackexchange.com_en_all_2026-02.zim|Hinduism Stack Exchange — scripture, doctrine, practice Q&A|194 MB"
+    "stackexchange-buddhism|stack_exchange/buddhism.stackexchange.com_en_all_2026-02.zim|Buddhism Stack Exchange — scripture, doctrine, practice Q&A|78 MB"
+    "stackexchange-judaism|stack_exchange/judaism.stackexchange.com_en_all_2026-02.zim|Mi Yodeya — Judaism Stack Exchange: halacha, Torah, Talmud Q&A|280 MB"
+    "stackexchange-biology|stack_exchange/biology.stackexchange.com_en_all_2026-02.zim|Biology Stack Exchange — research-level life sciences Q&A|403 MB"
+    "stackexchange-chemistry|stack_exchange/chemistry.stackexchange.com_en_all_2026-02.zim|Chemistry Stack Exchange — mechanism, synthesis, spectroscopy Q&A|397 MB"
+    "stackexchange-cs|stack_exchange/cs.stackexchange.com_en_all_2026-02.zim|Computer Science Stack Exchange — applied and theoretical CS Q&A|264 MB"
+    "stackexchange-cstheory|stack_exchange/cstheory.stackexchange.com_en_all_2026-02.zim|Theoretical Computer Science Stack Exchange — complexity, algorithms, logic|71 MB"
+    "stackexchange-earthscience|stack_exchange/earthscience.stackexchange.com_en_all_2026-02.zim|Earth Science Stack Exchange — geology, meteorology, oceanography Q&A|126 MB"
+    "stackexchange-engineering|stack_exchange/engineering.stackexchange.com_en_all_2026-02.zim|Engineering Stack Exchange — mechanical, civil, materials Q&A|242 MB"
+    "stackexchange-electronics|stack_exchange/electronics.stackexchange.com_en_all_2026-02.zim|Electrical Engineering Stack Exchange — circuits, signal processing, embedded|3.89 GB"
+    "stackexchange-mattermodeling|stack_exchange/mattermodeling.stackexchange.com_en_all_2026-02.zim|Matter Modeling Stack Exchange — computational materials science, DFT, MD|46 MB"
+    "stackexchange-math|stack_exchange/math.stackexchange.com_en_all_2026-02.zim|Mathematics Stack Exchange — the largest math Q&A archive|6.9 GB"
+    "stackexchange-physics|stack_exchange/physics.stackexchange.com_en_all_2026-02.zim|Physics Stack Exchange — canonical research-level physics Q&A|1.7 GB"
+    "stackexchange-stats|stack_exchange/stats.stackexchange.com_en_all_2026-02.zim|Cross Validated — canonical statistics, ML, and data analysis Q&A|1.5 GB"
+    "stackexchange-medicalsciences|stack_exchange/medicalsciences.stackexchange.com_en_all_2026-02.zim|Medical Sciences Stack Exchange — clinical and biomedical Q&A|58 MB"
+    "stackexchange-economics|stack_exchange/economics.stackexchange.com_en_all_2026-02.zim|Economics Stack Exchange — theory and applied Q&A|109 MB"
+    "stackexchange-academia|stack_exchange/academia.stackexchange.com_en_all_2026-02.zim|Academia Stack Exchange — academic career, teaching and higher ed Q&A|279 MB"
+    "stackexchange-politics|stack_exchange/politics.stackexchange.com_en_all_2026-02.zim|Politics Stack Exchange — policy, governance, international relations Q&A|199 MB"
 
     # Survival & Self-Sufficiency
     "post-disaster|other/zimgit-post-disaster_en_2024-05.zim|Post-disaster survival library|645 MB"
@@ -85,10 +110,53 @@ CATALOG=(
 
     # Reference
     "wiktionary|wiktionary/wiktionary_en_all_nopic_2026-02.zim|English dictionary & thesaurus|8.2 GB"
+    "wikipedia-history|wikipedia/wikipedia_en_history_nopic_2026-01.zim|Wikipedia — History topic subset (no images)|605 MB"
+    "wikipedia-molcell|wikipedia/wikipedia_en_molcell_nopic_2026-01.zim|Wikipedia — Molecular and cell biology subset (no images)|340 MB"
+    "wikipedia-chemistry|wikipedia/wikipedia_en_chemistry_nopic_2026-01.zim|Wikipedia — Chemistry subset (no images)|107 MB"
+    "wikipedia-mathematics|wikipedia/wikipedia_en_mathematics_nopic_2026-03.zim|Wikipedia — Mathematics subset (no images)|325 MB"
+    "wikipedia-physics|wikipedia/wikipedia_en_physics_nopic_2026-01.zim|Wikipedia — Physics subset (no images)|292 MB"
+    "wikipedia-geography|wikipedia/wikipedia_en_geography_nopic_2026-01.zim|Wikipedia — Geography subset (no images)|489 MB"
+    "wikipedia-sociology|wikipedia/wikipedia_en_sociology_nopic_2026-01.zim|Wikipedia — Sociology subset (no images)|198 MB"
+    "libretexts-biology|libretexts/libretexts.org_en_bio_2025-01.zim|LibreTexts — Biology open textbooks (molecular, cellular, organismal, ecology)|2.09 GB"
+    "libretexts-chemistry|libretexts/libretexts.org_en_chem_2025-01.zim|LibreTexts — Chemistry open textbooks (general, organic, inorganic, physical, analytical)|2.03 GB"
+    "libretexts-engineering|libretexts/libretexts.org_en_eng_2025-01.zim|LibreTexts — Engineering open textbooks (mechanical, civil, electrical, chemical)|647 MB"
+    "libretexts-mathematics|libretexts/libretexts.org_en_math_2026-01.zim|LibreTexts — Mathematics open textbooks (analysis, algebra, topology, applied)|792 MB"
+    "libretexts-physics|libretexts/libretexts.org_en_phys_2026-01.zim|LibreTexts — Physics open textbooks (classical, quantum, thermal, modern)|534 MB"
+    "libretexts-statistics|libretexts/libretexts.org_en_stats_2026-01.zim|LibreTexts — Statistics open textbooks (probability, inference, applied)|206 MB"
+    "libretexts-medicine|libretexts/libretexts.org_en_med_2025-01.zim|LibreTexts — Medicine open textbooks (anatomy, physiology, pathology, pharmacology)|1.11 GB"
+    "libretexts-k12|libretexts/libretexts.org_en_k12_2026-01.zim|LibreTexts — K-12 open educational resources|353 MB"
+    "planetmath|zimit/planetmath.org_en_all_2026-02.zim|PlanetMath — community mathematics encyclopedia with formal definitions and proofs|38 MB"
+    "algorithms-erickson|zimit/jeffe.cs.illinois.edu_en_all_2026-03.zim|Jeff Erickson — Algorithms textbook and lecture notes (UIUC)|493 MB"
+    "learningstats-r|zimit/learningstatisticswithr.com_en_all_2026-02.zim|Learning Statistics with R — Danielle Navarro's open textbook with R practicum|15 MB"
+    "surviving-residency|videos/quickguidesformedicine_en_all_2025-12.zim|Surviving Residency — quick clinical guides for medical trainees|503 MB"
+    "librepathology|other/librepathology_en_all_maxi_2025-09.zim|Libre Pathology — open pathology knowledge base|76 MB"
+    "wikem|other/wikem_en_all_maxi_2021-02.zim|WikEM — open-access emergency medicine reference|42 MB"
+    "mutopia-project|zimit/mutopiaproject.org_en_2025-09.zim|Mutopia Project — 2100+ free classical music scores|6.19 GB"
+    "open-music-theory|zimit/openmusictheory.com_en_all_2026-03.zim|Open Music Theory — open-access theory textbook|78 MB"
+    "internet-encyclopedia-philosophy|zimit/internet-encyclopedia-philosophy_en_all_2025-11.zim|Internet Encyclopedia of Philosophy — peer-reviewed academic reference|122 MB"
+    "encyclopedia-environment|zimit/encyclopedie-environnement.org_en_2025-06.zim|Encyclopedia of the Environment — peer-reviewed environmental science|4.81 GB"
+    "cd3wd|zimit/cd3wdproject.org_en_all_2025-11.zim|CD3WD — sustainable development and appropriate technology archive|554 MB"
 
     # Anthropology & Humanities
     "ted-anthropology|ted/ted_mul_anthropology_2026-01.zim|TED — Anthropology (talks & lectures)|635 MB"
     "ted-archaeology|ted/ted_mul_archaeology_2026-01.zim|TED — Archaeology (dig sites, methodology)|301 MB"
+    "ted-asia|ted/ted_mul_asia_2026-01.zim|TED — Asia (talks on Asian societies, politics, culture)|572 MB"
+    "ted-middle-east|ted/ted_mul_middle-east_2026-01.zim|TED — Middle East (talks on MENA region)|992 MB"
+    "ted-music|ted/ted_mul_music_2026-01.zim|TED — Music (talks on performance, composition, cognition)|3.82 GB"
+    "ted-philosophy|ted/ted_mul_philosophy_2026-01.zim|TED — Philosophy (talks on analytic, continental, applied traditions)|1.23 GB"
+    "ted-ethics|ted/ted_mul_ethics_2026-01.zim|TED — Ethics (talks on applied and normative ethics)|921 MB"
+    "ted-religion|ted/ted_mul_religion_2026-01.zim|TED — Religion (talks on comparative and lived religion)|1.58 GB"
+    "ted-brain|ted/ted_mul_brain_2026-01.zim|TED — Brain (neuroscience, cognition, consciousness talks)|3.88 GB"
+    "ted-economics|ted/ted_mul_economics_2026-01.zim|TED — Economics (markets, incentives, inequality, policy)|4.5 GB"
+    "ted-behavioral-economics|ted/ted_mul_behavioral-economics_2026-01.zim|TED — Behavioural Economics (decision-making, psychology of choice)|424 MB"
+    "ted-education|ted/ted_mul_education_2026-01.zim|TED — Education (learning, teaching, educational systems)|7.23 GB"
+    "ted-environment|ted/ted_mul_environment_2026-01.zim|TED — Environment (climate, sustainability, conservation)|5.00 GB"
+    "ted-government|ted/ted_mul_government_2026-02.zim|TED — Government (governance, policy, political institutions)|3.67 GB"
+    "ted-international-development|ted/ted_mul_international-development_2026-01.zim|TED — International Development (poverty, aid, SDGs)|1.48 GB"
+    "ted-politics|ted/ted_mul_politics_2026-02.zim|TED — Politics (ideologies, movements, political analysis)|4.87 GB"
+    "ted-international-relations|ted/ted_mul_international-relations_2026-01.zim|TED — International Relations (diplomacy, conflict, global governance)|500 MB"
+    "ted-public-health|ted/ted_mul_public-health_2026-01.zim|TED — Public Health (epidemiology, health policy, social determinants)|2.07 GB"
+    "ted-sociology|ted/ted_mul_sociology_2026-02.zim|TED — Sociology (social behaviour, institutions, inequality)|469 MB"
 
     # Project Gutenberg (by Library of Congress category)
     "gutenberg|gutenberg/gutenberg_en_all_2025-11.zim|Project Gutenberg — all English books|206 GB"
@@ -98,9 +166,10 @@ CATALOG=(
     "gutenberg-history|gutenberg/gutenberg_en_lcc-d_2026-03.zim|Gutenberg — World History|37 GB"
     "gutenberg-us-history|gutenberg/gutenberg_en_lcc-e_2026-03.zim|Gutenberg — US History|10 GB"
     "gutenberg-science|gutenberg/gutenberg_en_lcc-q_2026-03.zim|Gutenberg — Science|12 GB"
-    # LoC class B bundles philosophy, psychology and religion together.
-    # Include all three in the label so culture-and-personality /
-    # psychological-anthropology traditions surface for the right users.
+    # (LoC class B bundles philosophy, psychology and religion together.
+    #  The label reflects all three so culture-and-personality /
+    #  psychological-anthropology traditions surface for the right users.)
+    # Project Gutenberg (by Library of Congress category)
     "gutenberg-philosophy|gutenberg/gutenberg_en_lcc-b_2026-03.zim|Gutenberg — Philosophy, Psychology & Religion|6 GB"
     "gutenberg-social-science|gutenberg/gutenberg_en_lcc-h_2026-03.zim|Gutenberg — Social Sciences|9.1 GB"
     "gutenberg-poetry|gutenberg/gutenberg_en_lcc-pq_2026-03.zim|Gutenberg — French/Italian/Spanish Lit|9.3 GB"
@@ -109,13 +178,20 @@ CATALOG=(
     "gutenberg-music|gutenberg/gutenberg_en_lcc-m_2026-03.zim|Gutenberg — Music|4.2 GB"
     "gutenberg-art|gutenberg/gutenberg_en_lcc-n_2026-03.zim|Gutenberg — Fine Arts|37 GB"
     "gutenberg-military|gutenberg/gutenberg_en_lcc-u_2026-03.zim|Gutenberg — Military Science|1.4 GB"
-    # LoC class G bundles geography, anthropology, ethnology, archaeology,
-    # folklore and recreation together. Describe it accurately so users
-    # searching for anthropology actually find this package.
+    # (LoC class G bundles geography, anthropology, ethnology, archaeology,
+    #  folklore and recreation together. The label reflects that so users
+    #  searching for anthropology find this package.)
+    # Project Gutenberg (by Library of Congress category)
     "gutenberg-geography|gutenberg/gutenberg_en_lcc-g_2026-03.zim|Gutenberg — Geography, Anthropology & Recreation|8.1 GB"
     "gutenberg-technology|gutenberg/gutenberg_en_lcc-t_2026-03.zim|Gutenberg — Technology|6.3 GB"
     "gutenberg-education|gutenberg/gutenberg_en_lcc-l_2026-03.zim|Gutenberg — Education|3.3 GB"
     "gutenberg-political|gutenberg/gutenberg_en_lcc-j_2026-03.zim|Gutenberg — Political Science|4.1 GB"
+    "gutenberg-c|gutenberg/gutenberg_en_lcc-c_2025-12.zim|Gutenberg — Auxiliary sciences of history (archaeology, epigraphy, numismatics)|1.2 GB"
+    "gutenberg-pa|gutenberg/gutenberg_en_lcc-pa_2026-03.zim|Gutenberg — Greek and Latin language and literature|498 MB"
+    "gutenberg-pc|gutenberg/gutenberg_en_lcc-pc_2026-03.zim|Gutenberg — Romance languages and philology|172 MB"
+    "gutenberg-pl|gutenberg/gutenberg_en_lcc-pl_2026-03.zim|Gutenberg — Eastern Asian, African and Oceanian languages and literatures|102 MB"
+    "gutenberg-pn|gutenberg/gutenberg_en_lcc-pn_2026-03.zim|Gutenberg — Literature (general), drama, criticism, journalism|3 GB"
+    "gutenberg-pt|gutenberg/gutenberg_en_lcc-pt_2026-03.zim|Gutenberg — Germanic and Scandinavian literatures|724 MB"
 )
 
 # --- Bundles ---
@@ -160,7 +236,7 @@ print_bundles() {
     echo "                    Equivalent to the 206 GB gutenberg monolith but"
     echo "                    downloadable as 18 separate resumable files."
     echo ""
-    echo "  anthropology      Cultural, archaeological, linguistic & psychological (~32 GB)"
+    echo "  oxford-anthropology  Cultural, archaeological, linguistic & psychological (~24 GB)"
     echo "                    gutenberg-geography (LoC G: anthropology/ethnology/folklore),"
     echo "                    gutenberg-social-science (Durkheim, Weber, functionalism),"
     echo "                    gutenberg-philosophy (philosophy, psychology, religion),"
@@ -205,7 +281,7 @@ get_bundle_keys() {
         gutenberg-all-english)
             echo "gutenberg-fiction gutenberg-literature gutenberg-british-lit gutenberg-history gutenberg-us-history gutenberg-science gutenberg-philosophy gutenberg-social-science gutenberg-poetry gutenberg-law gutenberg-medicine gutenberg-music gutenberg-art gutenberg-military gutenberg-geography gutenberg-technology gutenberg-education gutenberg-political"
             ;;
-        # anthropology bundle maps to the four-field model:
+        # oxford-anthropology maps to the four-field model of anthropology:
         #   cultural/social → gutenberg-geography (LCC G: anthropology,
         #                     ethnology, folklore) + gutenberg-social-science
         #                     (LCC H: Durkheim/Weber/functionalism) + ted-anthropology
@@ -215,10 +291,125 @@ get_bundle_keys() {
         #                     religion) + stackexchange-psychology
         # Biological/physical anthropology is not covered — no dedicated ZIM
         # exists upstream; install a Wikipedia package for that subfield.
-        # NB: keep the case body a single echo with no blank lines or comments
-        # inline — catalog.ts parser regex requires `name)\n echo "...";;`.
-        anthropology)
+        oxford-anthropology)
             echo "gutenberg-geography gutenberg-social-science gutenberg-philosophy ted-anthropology ted-archaeology stackexchange-linguistics stackexchange-psychology"
+            ;;
+        # --- Oxford University graduate bundles (Humanities division) ---
+        # Produced by the oxford-bundles skill's bodleian-librarian +
+        # tutor-magister + catalog-archivist pipeline on 2026-04-08.
+        # oxford-anthropology is the renamed `anthropology` bundle, kept
+        # in the Oxford namespace for a consistent /library experience.
+        # Subjects with no Kiwix coverage (Oncology, Paediatrics, Clinical
+        # Psychiatry, Surgical Sciences, etc.) are in the MPLS/Medical divs.
+        # NB: each case body is exactly one echo — no inline comments,
+        # no blank lines. The catalog.ts parser regex is strict about this.
+        oxford-archaeology)
+            echo "ted-archaeology gutenberg-geography"
+            ;;
+        oxford-history-of-art)
+            echo "gutenberg-art"
+            ;;
+        oxford-asian-middle-eastern-studies)
+            echo "ted-asia ted-middle-east gutenberg-history gutenberg-pl"
+            ;;
+        oxford-classics)
+            echo "gutenberg-pa stackexchange-latin gutenberg-history"
+            ;;
+        oxford-english-language-literature)
+            echo "gutenberg-british-lit gutenberg-literature gutenberg-pn stackexchange-literature"
+            ;;
+        oxford-history)
+            echo "gutenberg-history gutenberg-us-history gutenberg-c wikipedia-history stackexchange-history stackexchange-hsm"
+            ;;
+        oxford-law)
+            echo "gutenberg-law stackexchange-law"
+            ;;
+        oxford-linguistics)
+            echo "stackexchange-linguistics wiktionary stackexchange-latin gutenberg-pa"
+            ;;
+        oxford-medieval-modern-languages)
+            echo "gutenberg-poetry gutenberg-pt gutenberg-pc"
+            ;;
+        oxford-music)
+            echo "gutenberg-music mutopia-project open-music-theory stackexchange-music ted-music"
+            ;;
+        oxford-philosophy)
+            echo "gutenberg-philosophy internet-encyclopedia-philosophy stackexchange-philosophy ted-philosophy ted-ethics"
+            ;;
+        oxford-theology-religion)
+            echo "gutenberg-philosophy stackexchange-hinduism stackexchange-buddhism stackexchange-judaism ted-religion"
+            ;;
+        oxford-fine-art)
+            echo "gutenberg-art"
+            ;;
+        # --- Oxford Mathematical, Physical and Life Sciences ---
+        oxford-biology)
+            echo "libretexts-biology stackexchange-biology wikipedia-molcell gutenberg-science"
+            ;;
+        oxford-chemistry)
+            echo "libretexts-chemistry stackexchange-chemistry wikipedia-chemistry gutenberg-science"
+            ;;
+        oxford-computer-science)
+            echo "algorithms-erickson stackexchange-cs stackexchange-cstheory stackoverflow"
+            ;;
+        oxford-earth-sciences)
+            echo "stackexchange-earthscience gutenberg-geography gutenberg-science"
+            ;;
+        oxford-engineering)
+            echo "libretexts-engineering stackexchange-engineering stackexchange-electronics gutenberg-technology"
+            ;;
+        oxford-materials)
+            echo "stackexchange-mattermodeling gutenberg-technology gutenberg-science"
+            ;;
+        oxford-mathematics)
+            echo "stackexchange-math libretexts-mathematics planetmath wikipedia-mathematics gutenberg-science"
+            ;;
+        oxford-physics)
+            echo "libretexts-physics stackexchange-physics wikipedia-physics gutenberg-science"
+            ;;
+        oxford-statistics)
+            echo "stackexchange-stats libretexts-statistics learningstats-r"
+            ;;
+        # --- Oxford Medical Sciences (Clinical Psychology has no Kiwix coverage) ---
+        oxford-clinical-medicine)
+            echo "libretexts-medicine stackexchange-medicalsciences surviving-residency wikem field-medicine military-medicine gutenberg-medicine"
+            ;;
+        oxford-clinical-neurosciences)
+            echo "ted-brain stackexchange-psychology libretexts-medicine gutenberg-medicine"
+            ;;
+        oxford-medicine)
+            echo "libretexts-medicine librepathology stackexchange-medicalsciences surviving-residency wikem gutenberg-medicine field-medicine military-medicine"
+            ;;
+        oxford-neuroscience)
+            echo "ted-brain stackexchange-psychology libretexts-medicine"
+            ;;
+        # --- Oxford Social Sciences ---
+        oxford-economics)
+            echo "gutenberg-social-science stackexchange-economics ted-economics ted-behavioral-economics"
+            ;;
+        oxford-education)
+            echo "gutenberg-education ted-education stackexchange-academia libretexts-k12"
+            ;;
+        oxford-geography-environment)
+            echo "gutenberg-geography wikipedia-geography encyclopedia-environment ted-environment wikivoyage"
+            ;;
+        oxford-global-area-studies)
+            echo "ted-asia ted-middle-east gutenberg-history gutenberg-pl"
+            ;;
+        oxford-government)
+            echo "gutenberg-political ted-government stackexchange-politics"
+            ;;
+        oxford-international-development)
+            echo "ted-international-development cd3wd gutenberg-social-science appropedia"
+            ;;
+        oxford-politics-international-relations)
+            echo "gutenberg-political ted-politics ted-international-relations stackexchange-politics"
+            ;;
+        oxford-social-policy-intervention)
+            echo "ted-public-health gutenberg-social-science appropedia"
+            ;;
+        oxford-sociology)
+            echo "gutenberg-social-science ted-sociology wikipedia-sociology"
             ;;
         *)
             echo ""

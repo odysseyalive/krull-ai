@@ -120,7 +120,46 @@ function parseKnowledge(text: string): {
     "gutenberg-essentials": "~65 GB",
     "gutenberg-stem": "~22 GB",
     "gutenberg-all-english": "~212 GB",
-    anthropology: "~24 GB",
+    // Oxford University graduate-subject bundles (Humanities division)
+    "oxford-anthropology": "~24 GB",
+    "oxford-archaeology": "~8.4 GB",
+    "oxford-history-of-art": "~37 GB",
+    "oxford-asian-middle-eastern-studies": "~39 GB",
+    "oxford-classics": "~38 GB",
+    "oxford-english-language-literature": "~37 GB",
+    "oxford-history": "~54 GB",
+    "oxford-law": "~2.5 GB",
+    "oxford-linguistics": "~8.9 GB",
+    "oxford-medieval-modern-languages": "~10.2 GB",
+    "oxford-music": "~15 GB",
+    "oxford-philosophy": "~8.5 GB",
+    "oxford-theology-religion": "~8.1 GB",
+    "oxford-fine-art": "~37 GB",
+    // Oxford University graduate-subject bundles (Mathematical, Physical and Life Sciences)
+    "oxford-biology": "~14.8 GB",
+    "oxford-chemistry": "~14.5 GB",
+    "oxford-computer-science": "~76 GB",
+    "oxford-earth-sciences": "~12.2 GB",
+    "oxford-engineering": "~11 GB",
+    "oxford-materials": "~12.1 GB",
+    "oxford-mathematics": "~20 GB",
+    "oxford-physics": "~14.5 GB",
+    "oxford-statistics": "~1.7 GB",
+    // Oxford University graduate-subject bundles (Medical Sciences)
+    "oxford-clinical-medicine": "~5.2 GB",
+    "oxford-clinical-neurosciences": "~8 GB",
+    "oxford-medicine": "~5.3 GB",
+    "oxford-neuroscience": "~5 GB",
+    // Oxford University graduate-subject bundles (Social Sciences)
+    "oxford-economics": "~14 GB",
+    "oxford-education": "~8.2 GB",
+    "oxford-geography-environment": "~18.6 GB",
+    "oxford-global-area-studies": "~39 GB",
+    "oxford-government": "~7.9 GB",
+    "oxford-international-development": "~11.7 GB",
+    "oxford-politics-international-relations": "~9.7 GB",
+    "oxford-social-policy-intervention": "~11.7 GB",
+    "oxford-sociology": "~9.8 GB",
   };
   const bundleDescs: Record<string, string> = {
     "dev-essentials": "Core developer docs",
@@ -135,8 +174,82 @@ function parseKnowledge(text: string): {
     "gutenberg-stem": "Science, technology, medicine",
     "gutenberg-all-english":
       "All 18 Library of Congress categories as resumable pieces (equivalent to the 206 GB monolith, split by subject)",
-    anthropology:
-      "Cultural, archaeological, linguistic & psychological anthropology",
+    // Oxford University graduate-subject bundles (Humanities division)
+    "oxford-anthropology":
+      "Cultural, archaeological, linguistic & psychological anthropology (four-field model)",
+    "oxford-archaeology":
+      "Field methodology talks plus LoC G primary texts for excavation history and theory",
+    "oxford-history-of-art":
+      "Gutenberg LoC N — the canonical art history and criticism collection",
+    "oxford-asian-middle-eastern-studies":
+      "Regional TED collections, Gutenberg LoC D (world history including Asia/Middle East), and LoC PL (Eastern languages/literatures)",
+    "oxford-classics":
+      "Gutenberg LoC PA (Greek and Latin language and literature), Latin Stack Exchange, and LoC D for ancient world history",
+    "oxford-english-language-literature":
+      "Gutenberg LoC PR (British) + PS (American) + PN (general/drama/criticism) plus Literature Stack Exchange for close-reading Q&A",
+    "oxford-history":
+      "Gutenberg LoC D (world), E (US), C (auxiliary historical sciences), Wikipedia history subset, plus History and History-of-Science Stack Exchanges",
+    "oxford-law":
+      "Gutenberg LoC K (jurisprudence and legal history) plus Law Stack Exchange for doctrinal Q&A",
+    "oxford-linguistics":
+      "Linguistics Stack Exchange, Wiktionary (full lexicographic reference), Latin SE for historical philology, and Gutenberg LoC PA",
+    "oxford-medieval-modern-languages":
+      "Gutenberg LoC PQ (French/Italian/Spanish/Portuguese), PT (Germanic/Scandinavian), and PC (Romance philology)",
+    "oxford-music":
+      "Gutenberg LoC M (musicology), Mutopia Project (2100+ free classical scores), Open Music Theory textbook, Music SE, and TED music talks",
+    "oxford-philosophy":
+      "Gutenberg LoC B (philosophy/psychology/religion canon), Internet Encyclopedia of Philosophy (peer-reviewed), Philosophy SE, and TED philosophy/ethics",
+    "oxford-theology-religion":
+      "Gutenberg LoC B (religion and philosophy) plus comparative-religion Stack Exchanges (Buddhism, Hinduism, Judaism) and TED religion talks",
+    "oxford-fine-art":
+      "Gutenberg LoC N — canonical art, criticism and practice texts",
+    // Oxford University graduate-subject bundles (Mathematical, Physical and Life Sciences)
+    "oxford-biology":
+      "LibreTexts Biology, Biology Stack Exchange, Wikipedia molecular/cell biology subset, and Gutenberg science canon",
+    "oxford-chemistry":
+      "LibreTexts Chemistry, Chemistry Stack Exchange, Wikipedia chemistry subset, and Gutenberg science canon",
+    "oxford-computer-science":
+      "Jeff Erickson's Algorithms textbook, CS and Theoretical CS Stack Exchanges, and the full Stack Overflow archive",
+    "oxford-earth-sciences":
+      "Earth Science Stack Exchange plus Gutenberg LoC G (physical geography) and science canon",
+    "oxford-engineering":
+      "LibreTexts Engineering, Engineering and Electronics Stack Exchanges, and Gutenberg technology canon (LoC T)",
+    "oxford-materials":
+      "Matter Modeling Stack Exchange (computational materials science) plus technology and science canon",
+    "oxford-mathematics":
+      "Math Stack Exchange (6.9 GB canonical community), LibreTexts Mathematics, PlanetMath encyclopedia, Wikipedia math subset, and Gutenberg science",
+    "oxford-physics":
+      "LibreTexts Physics, Physics Stack Exchange, Wikipedia physics subset, and Gutenberg science canon",
+    "oxford-statistics":
+      "Cross Validated (stats.stackexchange), LibreTexts Statistics, and Learning Statistics with R",
+    // Oxford University graduate-subject bundles (Medical Sciences; Clinical Psychology has no Kiwix coverage)
+    "oxford-clinical-medicine":
+      "LibreTexts Medicine, Medical Sciences SE, Surviving Residency guides, WikEM, plus field and military medicine",
+    "oxford-clinical-neurosciences":
+      "TED Brain collection, Psychology/Neuroscience SE, LibreTexts Medicine neurology, and Gutenberg medicine",
+    "oxford-medicine":
+      "LibreTexts Medicine, Libre Pathology, Medical Sciences SE, Surviving Residency, WikEM, and historical/field medicine",
+    "oxford-neuroscience":
+      "TED Brain, Psychology/Neuroscience SE, and LibreTexts Medicine neuroanatomy/neurology chapters",
+    // Oxford University graduate-subject bundles (Social Sciences)
+    "oxford-economics":
+      "Gutenberg LoC H (social sciences), Economics SE, TED Economics and Behavioral Economics",
+    "oxford-education":
+      "Gutenberg LoC L (education), TED Education, Academia SE, and LibreTexts K-12",
+    "oxford-geography-environment":
+      "Gutenberg LoC G, Wikipedia geography, Encyclopedia of the Environment, TED Environment, and Wikivoyage",
+    "oxford-global-area-studies":
+      "Regional TED collections (Asia, Middle East), Gutenberg LoC D (world history), and LoC PL (Eastern languages)",
+    "oxford-government":
+      "Gutenberg LoC J (political science), TED Government, and Politics SE",
+    "oxford-international-development":
+      "TED International Development, CD3WD sustainable-development archive, Gutenberg LoC H, and Appropedia",
+    "oxford-politics-international-relations":
+      "Gutenberg LoC J, TED Politics and International Relations, and Politics SE",
+    "oxford-social-policy-intervention":
+      "TED Public Health, Gutenberg LoC H, and Appropedia for evidence-based intervention work",
+    "oxford-sociology":
+      "Gutenberg LoC H (sociology canon), TED Sociology, and Wikipedia sociology subset",
   };
   const caseRe = /(\S[\S-]*)\)\s*\n\s*echo\s+"([^"]+)"\s*;;/g;
   let caseMatch: RegExpExecArray | null;

@@ -587,33 +587,61 @@ function buildKindPanel(
   const panel = document.createElement("div");
   panel.className = "kind-panel";
 
-  // Bundles section (knowledge only — wikipedia/maps don't have bundles yet)
+  // Bundles section (knowledge only — wikipedia/maps don't have bundles yet).
+  //
+  // We split into two rendered sections when any oxford-* bundles exist:
+  //   1. Standard curated bundles (dev-essentials, gutenberg-*, etc.)
+  //   2. Oxford University — Graduate Programme Bundles
+  // The Oxford collection is large enough (~35 bundles) that mixing it
+  // with the standard bundles would dominate the grid; a separate
+  // section gives it a named home and frames it as academic content.
   const bundles = catalog.bundles.filter((b) => b.kind === kind);
   if (bundles.length) {
-    const bundleSection = document.createElement("section");
-    bundleSection.className = "kind-panel__section";
-    const h = document.createElement("h3");
-    h.className = "kind-panel__heading";
-    h.textContent = "Bundles";
-    const sub = document.createElement("p");
-    sub.className = "kind-panel__sub";
-    sub.textContent = "Curated package collections — installs everything in one click.";
-    bundleSection.append(h, sub);
-
-    const bundleGrid = document.createElement("div");
-    bundleGrid.className = "bundle-grid";
-    // Build a lookup of package records so each bundle card can check
-    // not just "installed" but also corrupt/partialBytes for each
-    // member — needed to render "Resume (X%)" on a bundle whose
-    // members include truncated files.
+    // Build the package lookup once; both bundle sections reuse it.
     const packagesByKey = new Map(
       catalog.packages.map((p) => [p.key, p] as const),
     );
-    for (const bundle of bundles) {
-      bundleGrid.append(renderBundleCard(bundle, packagesByKey, onBundleInstall));
-    }
-    bundleSection.append(bundleGrid);
-    panel.append(bundleSection);
+
+    const oxfordBundles = bundles.filter((b) => b.key.startsWith("oxford-"));
+    const standardBundles = bundles.filter((b) => !b.key.startsWith("oxford-"));
+
+    const renderBundleSection = (
+      heading: string,
+      subtitle: string,
+      items: CatalogBundle[],
+      extraClass?: string,
+    ) => {
+      if (!items.length) return;
+      const section = document.createElement("section");
+      section.className = `kind-panel__section${extraClass ? ` ${extraClass}` : ""}`;
+      const h = document.createElement("h3");
+      h.className = "kind-panel__heading";
+      h.textContent = heading;
+      const sub = document.createElement("p");
+      sub.className = "kind-panel__sub";
+      sub.textContent = subtitle;
+      section.append(h, sub);
+
+      const grid = document.createElement("div");
+      grid.className = "bundle-grid";
+      for (const bundle of items) {
+        grid.append(renderBundleCard(bundle, packagesByKey, onBundleInstall));
+      }
+      section.append(grid);
+      panel.append(section);
+    };
+
+    renderBundleSection(
+      "Bundles",
+      "Curated package collections — installs everything in one click.",
+      standardBundles,
+    );
+    renderBundleSection(
+      "Oxford University — Graduate Programme Bundles",
+      "One bundle per Oxford graduate subject, built by the oxford-bundles pipeline. Members are selectable individually under their categories below.",
+      oxfordBundles,
+      "kind-panel__section--oxford",
+    );
   }
 
   // Group packages by category

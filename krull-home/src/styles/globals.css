@@ -944,6 +944,21 @@ button {
   margin: 0 0 1rem;
 }
 
+/* Oxford University section — visually distinguish the graduate-programme
+ * bundles from the standard curated bundles so ~35 subject bundles don't
+ * drown the "Bundles" grid. The border accent + gold underline on the
+ * heading is subtle but clearly marks it as its own collection. */
+.kind-panel__section--oxford {
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+  margin-top: 0.5rem;
+}
+.kind-panel__section--oxford .kind-panel__heading {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
 /* Bundle grid */
 .bundle-grid {
   display: grid;
