@@ -40,7 +40,13 @@ export function PackageRow(opts: PackageRowOptions): HTMLElement {
 
   const sizeLine = document.createElement("div");
   sizeLine.className = "pkg-row__size";
-  if (pkg.installed && pkg.installedSizeBytes != null) {
+  // For maps the single-file on-disk size is misleading — a map region
+  // install actually downloads the base .pmtiles plus global terrain
+  // plus auto-detected nautical and aero charts, distributed across
+  // many files. Always show the computed catalog estimate for maps so
+  // the user sees the real total. For knowledge/wikipedia packages
+  // (single ZIM file) the on-disk size is accurate and preferred.
+  if (pkg.kind !== "maps" && pkg.installed && pkg.installedSizeBytes != null) {
     sizeLine.textContent = formatBytes(pkg.installedSizeBytes);
   } else if (pkg.size) {
     sizeLine.textContent = pkg.size;

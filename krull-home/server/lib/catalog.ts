@@ -172,7 +172,104 @@ function parseWikipedia(text: string): CatalogPackage[] {
   return out;
 }
 
+/**
+ * Parse a map-region bbox field from the catalog entry. Returns null
+ * for entries like "planet" that have an empty bbox — those skip the
+ * auto-detect logic in the bash script.
+ */
+function parseBbox(
+  bboxStr: string | undefined,
+): [number, number, number, number] | null {
+  if (!bboxStr) return null;
+  const parts = bboxStr.split(",").map((s) => parseFloat(s));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+  return parts as [number, number, number, number];
+}
+
+/** Standard two-axis-aligned-bounding-box overlap test. */
+function bboxesOverlap(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+): boolean {
+  const [aW, aS, aE, aN] = a;
+  const [bW, bS, bE, bN] = b;
+  return aW < bE && aE > bW && aS < bN && aN > bS;
+}
+
+/**
+ * Parse chart size fields like "596" (MB), "~5 GB", "~100 MB", "~800 MB".
+ * Returns the size in megabytes. Returns 0 for unparseable input.
+ */
+function parseSizeToMb(s: string | undefined): number {
+  if (!s) return 0;
+  const m = /([\d.]+)\s*(KB|MB|GB|TB|B)?/i.exec(s);
+  if (!m) return 0;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value)) return 0;
+  const unit = (m[2] ?? "MB").toUpperCase();
+  switch (unit) {
+    case "KB":
+      return value / 1024;
+    case "MB":
+      return value;
+    case "GB":
+      return value * 1024;
+    case "TB":
+      return value * 1024 * 1024;
+    default:
+      return value;
+  }
+}
+
+/** Format a megabyte number as a short human-readable size string. */
+function formatMb(mb: number): string {
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return gb >= 10 ? `~${Math.round(gb)} GB` : `~${gb.toFixed(1)} GB`;
+  }
+  if (mb >= 10) return `~${Math.round(mb)} MB`;
+  return `~${mb.toFixed(1)} MB`;
+}
+
+interface ChartSection {
+  id: string;
+  sizeMb: number;
+  bbox: [number, number, number, number];
+}
+
+/**
+ * Parse a bbox-keyed bash array like NCDS_SECTIONS or FAA_SECTIONS.
+ * Line format:  "id|description|size_mb|west,south,east,north"
+ */
+function parseChartSections(text: string, arrayName: string): ChartSection[] {
+  const out: ChartSection[] = [];
+  const lines = extractArray(text, arrayName);
+  for (const line of lines) {
+    if (line.startsWith("#")) continue;
+    const raw = unquote(line);
+    const parts = raw.split("|");
+    if (parts.length < 4) continue;
+    const [id, , sizeStr, bboxStr] = parts;
+    const bbox = parseBbox(bboxStr);
+    if (!bbox) continue;
+    const sizeMb = parseSizeToMb(sizeStr);
+    out.push({ id, sizeMb, bbox });
+  }
+  return out;
+}
+
+/**
+ * Global terrain PMTiles downloaded by the default path for every
+ * region. The bash script hardcodes this as "z0-9, ~700 MB" — see
+ * download_terrain() in scripts/download-maps.sh.
+ */
+const GLOBAL_TERRAIN_MB = 700;
+
 function parseMaps(text: string): CatalogPackage[] {
+  // Parse auxiliary arrays first so we can compute overlap totals per region.
+  const ncdsSections = parseChartSections(text, "NCDS_SECTIONS");
+  const faaSections = parseChartSections(text, "FAA_SECTIONS");
+
   const out: CatalogPackage[] = [];
   const lines = extractArray(text, "CATALOG");
   for (const line of lines) {
@@ -180,13 +277,43 @@ function parseMaps(text: string): CatalogPackage[] {
     const raw = unquote(line);
     const parts = raw.split("|");
     if (parts.length < 3) continue;
-    const [key, description, size] = parts;
+    const [key, description, sizeStr, bboxStr] = parts;
+
+    const baseMb = parseSizeToMb(sizeStr);
+    const bbox = parseBbox(bboxStr);
+
+    // Replicate the bash script's default download path:
+    //   base OSM tiles + global terrain + auto-detected nautical + aero.
+    // Regions with an empty bbox (like "planet") skip the nautical and
+    // aero auto-detection — matches the `if [ -n "$REGION_BBOX" ]`
+    // guard in the script.
+    let nauticalMb = 0;
+    let aeroMb = 0;
+    if (bbox) {
+      nauticalMb = ncdsSections
+        .filter((s) => bboxesOverlap(bbox, s.bbox))
+        .reduce((sum, s) => sum + s.sizeMb, 0);
+      aeroMb = faaSections
+        .filter((s) => bboxesOverlap(bbox, s.bbox))
+        .reduce((sum, s) => sum + s.sizeMb, 0);
+    }
+
+    const totalMb = baseMb + GLOBAL_TERRAIN_MB + nauticalMb + aeroMb;
+
+    // Build a human-readable description that shows the breakdown so
+    // the user knows what they're actually getting.
+    const breakdown: string[] = [];
+    if (baseMb > 0) breakdown.push(`${formatMb(baseMb)} base`);
+    breakdown.push(`${formatMb(GLOBAL_TERRAIN_MB)} terrain`);
+    if (nauticalMb > 0) breakdown.push(`${formatMb(nauticalMb)} nautical`);
+    if (aeroMb > 0) breakdown.push(`${formatMb(aeroMb)} aero`);
+
     out.push({
       kind: "maps",
       key,
       name: description,
-      description: `Base OSM map tiles for ${description}.`,
-      size,
+      description: `Offline maps for ${description}. Includes ${breakdown.join(" + ")}.`,
+      size: formatMb(totalMb),
       file: `${key}.pmtiles`,
       targetDir: "data/tiles",
       category: "Base regions",

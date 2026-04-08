@@ -190,37 +190,59 @@ export async function startBundleInstall(
     timestamp: Date.now(),
   });
 
-  // Pre-clean: remove any corrupt files for members of this bundle
-  // BEFORE running the script. The script's [ -f ] "already downloaded"
-  // check would otherwise shortcircuit past corrupt files forever, and
-  // we'd loop on the same broken state on every click. We do this by
-  // re-reading the catalog (so we have the corrupt flag) and unlinking
-  // any matching files.
-  if (memberKeys.length > 0) {
-    try {
-      const catalog = await loadCatalogForCleanup(REPO);
-      const cleaned: string[] = [];
-      for (const key of memberKeys) {
-        const pkg = catalog.packages.find((p) => p.key === key);
-        if (pkg && pkg.corrupt) {
-          const full = path.join(REPO, pkg.targetDir, pkg.file);
-          await fs.unlink(full).catch(() => {});
-          cleaned.push(`${key} (${pkg.corrupt})`);
-        }
+  // Load the catalog once to get the full member details (file path,
+  // expected byte size). We need these for both pre-clean (detecting
+  // corrupt files) AND for intra-package progress polling during the
+  // install — so the progress bar moves while a single large member is
+  // actively downloading instead of sitting at 0% for 30 minutes.
+  interface MemberInfo {
+    key: string;
+    name: string;
+    filePath: string;
+    expectedBytes: number;
+  }
+  const members: MemberInfo[] = [];
+  try {
+    const catalog = await loadCatalogForCleanup(REPO);
+
+    // Pre-clean: remove any corrupt files for members of this bundle
+    // BEFORE running the script. The script's [ -f ] "already downloaded"
+    // check would otherwise shortcircuit past corrupt files forever.
+    const cleaned: string[] = [];
+    // Only delete files that are UNRECOVERABLE corrupt — HTML error
+    // pages, wrong magic bytes, etc. NOT "truncated" files, because
+    // those are almost always valid in-progress downloads that curl
+    // can resume via its `-C -` flag. Deleting a truncated file would
+    // force a full re-download from zero and waste hours of bandwidth
+    // for a bundle full of multi-GB files.
+    const UNRECOVERABLE = new Set(["html", "magic"]);
+    for (const key of memberKeys) {
+      const pkg = catalog.packages.find((p) => p.key === key);
+      if (!pkg) continue;
+      const filePath = path.join(REPO, pkg.targetDir, pkg.file);
+      members.push({
+        key: pkg.key,
+        name: pkg.name,
+        filePath,
+        expectedBytes: parseSize(pkg.size) ?? 0,
+      });
+      if (pkg.corrupt && UNRECOVERABLE.has(pkg.corrupt)) {
+        await fs.unlink(filePath).catch(() => {});
+        cleaned.push(`${key} (${pkg.corrupt})`);
       }
-      if (cleaned.length > 0) {
-        pushEvent(job, {
-          phase: "downloading",
-          percent: 0,
-          bytes: 0,
-          total: totalCount,
-          message: `Cleaned ${cleaned.length} corrupt file${cleaned.length === 1 ? "" : "s"}: ${cleaned.join(", ")}`,
-          timestamp: Date.now(),
-        });
-      }
-    } catch {
-      /* If catalog scan fails we just proceed without pre-clean */
     }
+    if (cleaned.length > 0) {
+      pushEvent(job, {
+        phase: "downloading",
+        percent: 0,
+        bytes: 0,
+        total: totalCount,
+        message: `Cleaned ${cleaned.length} corrupt file${cleaned.length === 1 ? "" : "s"}: ${cleaned.join(", ")}`,
+        timestamp: Date.now(),
+      });
+    }
+  } catch {
+    /* If catalog scan fails we proceed without pre-clean or polling */
   }
 
   const child = spawn("bash", ["scripts/download-knowledge.sh", bundleKey], {
@@ -233,8 +255,48 @@ export async function startBundleInstall(
   let stdoutBuf = "";
   // Track how many distinct packages have started so we can emit
   // "Installing X of N: <desc>" updates as the bash script chews
-  // through the bundle.
-  let started = 0;
+  // through the bundle. The progress bar shows CURRENT FILE progress
+  // (0-100% per file, resetting for each member) so the user sees
+  // continuous motion even when a single file is 20 GB. The label
+  // always says "X of N" so they still know their position in the
+  // bundle. For bundles with many tiny files, the bar will reset
+  // repeatedly — that's fine because the label carries the overall
+  // position.
+  let currentIndex = -1;
+  let currentLabel = "";
+  let filePoll: NodeJS.Timeout | null = null;
+
+  function stopPolling(): void {
+    if (filePoll) {
+      clearInterval(filePoll);
+      filePoll = null;
+    }
+  }
+
+  function startPolling(): void {
+    stopPolling();
+    const member = members[currentIndex];
+    if (!member || member.expectedBytes <= 0) return;
+    filePoll = setInterval(async () => {
+      try {
+        const st = await fs.stat(member.filePath);
+        const percent = Math.min(
+          99,
+          Math.round((st.size / member.expectedBytes) * 100),
+        );
+        pushEvent(job, {
+          phase: "downloading",
+          percent,
+          bytes: currentIndex,
+          total: totalCount,
+          message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
+          timestamp: Date.now(),
+        });
+      } catch {
+        /* file not created yet — curl hasn't opened it */
+      }
+    }, 1000);
+  }
 
   child.stderr.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-2000);
@@ -250,32 +312,53 @@ export async function startBundleInstall(
       // Lines like: [*] Downloading: Python standard library docs (4 MB)
       const downloading = line.match(/^\[\*\] Downloading: (.+?) \(/);
       if (downloading) {
-        started++;
+        stopPolling();
+        currentIndex++;
+        currentLabel = downloading[1];
+        // Reset the bar to 0% for this new file — it'll fill as the
+        // download progresses via the polling ticks below.
         pushEvent(job, {
           phase: "downloading",
-          percent: totalCount
-            ? Math.round(((started - 1) / totalCount) * 100)
-            : undefined,
-          bytes: started - 1,
+          percent: 0,
+          bytes: currentIndex,
           total: totalCount,
-          message: `Installing ${started} of ${totalCount}: ${downloading[1]}`,
+          message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
           timestamp: Date.now(),
         });
+        startPolling();
         continue;
       }
 
       // Lines like: [+] Already downloaded: <desc> (<file>)
       const cached = line.match(/^\[\+\] Already downloaded: (.+?) \(/);
       if (cached) {
-        started++;
+        stopPolling();
+        currentIndex++;
+        currentLabel = cached[1];
+        // Cached members flash the bar to 100% briefly and move on.
         pushEvent(job, {
           phase: "downloading",
-          percent: totalCount
-            ? Math.round((started / totalCount) * 100)
-            : undefined,
-          bytes: started,
+          percent: 100,
+          bytes: currentIndex + 1,
           total: totalCount,
-          message: `Already installed (${started} of ${totalCount}): ${cached[1]}`,
+          message: `Already installed (${currentIndex + 1} of ${totalCount}): ${currentLabel}`,
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+
+      // Lines like: [+] Done: <filename>
+      const done = line.match(/^\[\+\] Done: /);
+      if (done) {
+        // The current file just finished — flip the bar to 100% so the
+        // user sees it complete before the next file resets it to 0%.
+        stopPolling();
+        pushEvent(job, {
+          phase: "downloading",
+          percent: 100,
+          bytes: currentIndex + 1,
+          total: totalCount,
+          message: `Installing ${currentIndex + 1} of ${totalCount}: ${currentLabel}`,
           timestamp: Date.now(),
         });
         continue;
@@ -284,6 +367,7 @@ export async function startBundleInstall(
   });
 
   child.on("close", async (code) => {
+    stopPolling();
     if (code !== 0) {
       pushEvent(job, {
         phase: "failed",
@@ -361,6 +445,7 @@ export async function startBundleInstall(
   });
 
   child.on("error", (err) => {
+    stopPolling();
     pushEvent(job, {
       phase: "failed",
       error: `spawn failed: ${err.message}`,
