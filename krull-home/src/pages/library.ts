@@ -145,6 +145,52 @@ export async function LibraryPage(): Promise<HTMLElement> {
   }
 
   /**
+   * Flip every `.pkg-row` matching one of `memberKeys` into the
+   * installing/queued visual state. Used by both the optimistic path
+   * in `handleBundleInstall` and the state-poll hydration path below
+   * so a queued bundle lights up its member rows in the catalog list,
+   * not just the rows inside the bundle card's details panel.
+   * Already-installed members keep their ✓ state.
+   */
+  function markMemberRowsQueued(
+    memberKeys: string[],
+    kind: PackageKind,
+    buttonLabel: string,
+  ) {
+    for (const key of memberKeys) {
+      const row = panel.querySelector(
+        `.pkg-row[data-key="${cssEscape(key)}"][data-kind="${kind}"]`,
+      ) as HTMLElement | null;
+      if (!row) continue;
+      if (row.classList.contains("pkg-row--installed")) continue;
+      row.classList.add("pkg-row--installing");
+      const button = row.querySelector("button") as HTMLButtonElement | null;
+      if (button) {
+        button.disabled = true;
+        button.textContent = buttonLabel;
+      }
+    }
+  }
+
+  /**
+   * Mark a bundle card as installing/queued. Mirrors the inline code
+   * path in `handleBundleInstall` so the state-poll hydration can
+   * re-apply the same visual after a tab switch or page refresh.
+   */
+  function markBundleCard(bundleKey: string, buttonLabel: string) {
+    const bundleCard = panel.querySelector(
+      `.bundle-card[data-key="${cssEscape(bundleKey)}"]`,
+    ) as HTMLElement | null;
+    if (!bundleCard) return;
+    bundleCard.classList.add("bundle-card--installing");
+    const btn = bundleCard.querySelector("button") as HTMLButtonElement | null;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = buttonLabel;
+    }
+  }
+
+  /**
    * Walk the current panel and mark any rows/cards that correspond to
    * the active download or queued entries. Also resubscribes SSE for
    * the active job so the button label continues to tick up. This is
@@ -153,6 +199,7 @@ export async function LibraryPage(): Promise<HTMLElement> {
    */
   function applyDownloadStateToPanel() {
     const { active, queue } = downloadState;
+    const bundleKind = `${current}-bundle`;
 
     // Active download on the current tab → hydrate the row and
     // resubscribe to its SSE stream.
@@ -182,38 +229,78 @@ export async function LibraryPage(): Promise<HTMLElement> {
           activeStreams.set(active.jobId, stop);
         }
       }
-      // Active bundle on the current tab.
-      const bundleCard = panel.querySelector(
-        `.bundle-card[data-key="${cssEscape(active.key)}"]`,
-      ) as HTMLElement | null;
-      if (bundleCard) {
-        bundleCard.classList.add("bundle-card--installing");
-        const btn = bundleCard.querySelector("button") as HTMLButtonElement | null;
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent =
-            active.percent != null ? `${active.percent}%` : "Downloading…";
-        }
-      }
+    }
+
+    // Active bundle on the current tab → hydrate the bundle card and
+    // every member `.pkg-row` in the catalog list.
+    if (active && active.kind === bundleKind) {
+      const label =
+        active.percent != null ? `${active.percent}%` : "Downloading…";
+      markBundleCard(active.key, label);
+      const bundle = catalog.bundles.find(
+        (b) => b.kind === current && b.key === active.key,
+      );
+      if (bundle) markMemberRowsQueued(bundle.members, current, label);
     }
 
     // Queued entries on the current tab → show "Queued (#N)" on the
-    // matching rows so the user knows they're already in line.
+    // matching rows so the user knows they're already in line. For
+    // queued bundles, also light up every member row so the whole
+    // pipeline is visible at a glance.
     queue.forEach((q, idx) => {
-      if (q.kind !== current) return;
-      const row = panel.querySelector(
-        `.pkg-row[data-key="${cssEscape(q.key)}"][data-kind="${q.kind}"]`,
-      ) as HTMLElement | null;
-      if (row) {
-        row.classList.add("pkg-row--installing");
-        const button = row.querySelector("button") as HTMLButtonElement | null;
-        if (button) {
-          button.disabled = true;
-          const position = idx + (active ? 2 : 1);
-          button.textContent = `Queued (#${position})`;
+      const position = idx + (active ? 2 : 1);
+      const label = `Queued (#${position})`;
+      if (q.kind === current) {
+        const row = panel.querySelector(
+          `.pkg-row[data-key="${cssEscape(q.key)}"][data-kind="${q.kind}"]`,
+        ) as HTMLElement | null;
+        if (row) {
+          row.classList.add("pkg-row--installing");
+          const button = row.querySelector("button") as HTMLButtonElement | null;
+          if (button) {
+            button.disabled = true;
+            button.textContent = label;
+          }
         }
+        return;
+      }
+      if (q.kind === bundleKind) {
+        markBundleCard(q.key, label);
+        const bundle = catalog.bundles.find(
+          (b) => b.kind === current && b.key === q.key,
+        );
+        if (bundle) markMemberRowsQueued(bundle.members, current, label);
       }
     });
+
+    // Anticipatory preview: if *anything* is downloading or queued
+    // (on any tab), relabel every remaining actionable row/card on
+    // the current tab to "Queue" so the user can see at a glance
+    // that clicking anywhere will enqueue behind the running work.
+    // Buttons stay enabled — the click handler in handleInstall /
+    // handleBundleInstall still performs the real enqueue, and the
+    // next panel re-render (via refreshCatalog on jobEnded) resets
+    // the labels to their natural Install/Resume/Redownload text.
+    if (active || queue.length > 0) {
+      panel
+        .querySelectorAll<HTMLElement>(
+          ".pkg-row:not(.pkg-row--installed):not(.pkg-row--installing)",
+        )
+        .forEach((row) => {
+          const button = row.querySelector("button") as HTMLButtonElement | null;
+          if (!button || button.disabled) return;
+          button.textContent = "Queue";
+        });
+      panel
+        .querySelectorAll<HTMLElement>(
+          ".bundle-card:not(.bundle-card--installing):not(.bundle-card--installed)",
+        )
+        .forEach((card) => {
+          const button = card.querySelector("button") as HTMLButtonElement | null;
+          if (!button || button.disabled) return;
+          button.textContent = "Queue";
+        });
+    }
   }
 
   /**
@@ -296,6 +383,9 @@ export async function LibraryPage(): Promise<HTMLElement> {
       ) as HTMLElement | null;
       if (label) label.textContent = bundleMemberStatusLabel("queued", undefined);
     });
+    // Also mark the matching rows in the catalog list below, so the
+    // whole pipeline lights up — not just the rows inside the card.
+    markMemberRowsQueued(bundle.members, bundle.kind, "Queued…");
 
     try {
       const { jobId } = await startBundleInstall(bundle.kind, bundle.key);
