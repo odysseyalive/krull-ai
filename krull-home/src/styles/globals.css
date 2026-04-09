@@ -972,6 +972,15 @@ button {
   border-radius: var(--radius-lg);
   padding: 1.25rem 1.35rem;
   display: grid;
+  /* Pin the implicit column to the card's inner width. Without this,
+   * a grid item's default min-width:auto lets the implicit column
+   * expand to the widest child's min-content — any unbreakable run
+   * in a description (e.g. "Christianity/Islam/Judaism/Hinduism/Buddhism,"
+   * — slashes are not soft-break points) blows children past the
+   * card's border-box while the border-box stays clamped by the
+   * outer grid track. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 0.65rem;
 }
 .bundle-card__title {
