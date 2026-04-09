@@ -500,6 +500,22 @@ html.krull-dark ._page .graybox a,
 html.krull-dark ._page blockquote a {
   color: #6fb3d2 !important;
 }
+/* PHP DevDocs wraps method / class / function prototype signatures in
+ * DocBook-style .*synopsis + .dc-description classes with a light-cyan
+ * background. Covers classsynopsis, methodsynopsis, constructorsynopsis,
+ * destructorsynopsis, fieldsynopsis, funcsynopsis, funcprototype. */
+html.krull-dark ._page [class*="synopsis"],
+html.krull-dark ._page .funcprototype,
+html.krull-dark ._page .dc-description,
+html.krull-dark ._page .dc-title {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark ._page [class*="synopsis"] a,
+html.krull-dark ._page .dc-description a {
+  color: #6fb3d2 !important;
+}
 
 /* ---------- Theme toggle button ---------- */
 #krull-theme-toggle {
