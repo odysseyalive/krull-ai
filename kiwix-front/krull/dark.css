@@ -294,9 +294,23 @@ html.krull-dark .paginate_button.current {
   color: #d4a574 !important;
   border-color: #d4a574 !important;
 }
-/* jQuery-UI autocomplete dropdown */
-html.krull-dark .ui-autocomplete.ui-widget-content {
+/* jQuery-UI autocomplete dropdown.
+ * jQuery UI's stock theme layers a light inset-texture PNG
+ * (ui-bg_inset-soft_100_f4f0ec_1x100.png) as a background-image on
+ * .ui-widget-content, so setting only background-color leaves the
+ * texture visible and the popup still looks white. Explicitly blank
+ * the background image here and on all the related .ui-* classes. */
+html.krull-dark .ui-widget,
+html.krull-dark .ui-widget-content,
+html.krull-dark .ui-widget-header,
+html.krull-dark .ui-autocomplete,
+html.krull-dark .ui-autocomplete.ui-widget-content,
+html.krull-dark .ui-menu,
+html.krull-dark .ui-menu-item,
+html.krull-dark .ui-menu-item-wrapper {
+  background-image: none !important;
   background-color: #161b25 !important;
+  color: #e6edf3 !important;
   border-color: #1f2733 !important;
 }
 html.krull-dark .ui-menu-item a,
@@ -304,9 +318,15 @@ html.krull-dark .ui-menu-item-wrapper {
   color: #e6edf3 !important;
 }
 html.krull-dark .ui-state-active,
-html.krull-dark .ui-state-focus {
+html.krull-dark .ui-state-focus,
+html.krull-dark .ui-state-hover,
+html.krull-dark .ui-widget-content .ui-state-active,
+html.krull-dark .ui-widget-content .ui-state-focus,
+html.krull-dark .ui-widget-content .ui-state-hover {
+  background-image: none !important;
   background-color: #1c2230 !important;
   color: #d4a574 !important;
+  border-color: #d4a574 !important;
 }
 /* Gutenberg content spinner overlay (not the kiwix library loader) */
 html.krull-dark .spinner {
