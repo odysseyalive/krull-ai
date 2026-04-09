@@ -75,6 +75,30 @@ html.krull-dark .kiwixHomeBody__results {
   color: #8b96a8 !important;
 }
 
+/* Infinite-scroll fade overlay on the library welcome page. Kiwix draws
+ * a linear-gradient from transparent to white at the bottom of the
+ * currently-loaded book cards as a "more below" hint — on the dark
+ * theme that reads as a bright white band slashing across the page. */
+html.krull-dark #fadeOut,
+html.krull-dark .fadeOut {
+  background: linear-gradient(rgba(11, 14, 20, 0) 0%, rgb(11, 14, 20) 100%) !important;
+}
+
+/* Top-right raster icons on the library page (language selector and
+ * OPDS feed) ship as brightly-coloured PNGs which clash with the dark
+ * theme. Greyscale + warm tint to match the parchment-gold accent. */
+html.krull-dark #uiLanguageSelectorButton,
+html.krull-dark #feedLogo,
+html.krull-dark img.feedLogo {
+  filter: grayscale(1) brightness(1.3) sepia(0.3) hue-rotate(-10deg);
+  opacity: 0.85;
+}
+html.krull-dark #uiLanguageSelectorButton:hover,
+html.krull-dark #feedLogo:hover,
+html.krull-dark img.feedLogo:hover {
+  opacity: 1;
+}
+
 /* Book/result tiles */
 html.krull-dark .book {
   border-color: #1f2733 !important;
@@ -89,8 +113,12 @@ html.krull-dark .book__header,
 html.krull-dark .book__name { color: #e6edf3 !important; }
 html.krull-dark .book__description { color: #8b96a8 !important; }
 html.krull-dark .book__tags,
-html.krull-dark .book__languageTag,
 html.krull-dark .book__publisher { color: #5a6577 !important; }
+html.krull-dark .book__languageTag {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+}
 html.krull-dark .book__download {
   color: #d4a574 !important;
 }
