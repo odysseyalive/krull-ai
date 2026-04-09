@@ -55,6 +55,65 @@
     return out;
   }
 
+  // Strip the stock library-filter's "q" param from the hash AND from
+  // the stock "filters" cookie.
+  //
+  // Stock behavior (see kiwix-serve skin/index.js):
+  //   - On every change event, resetAndFilter() does pushState(#q=X)
+  //     AND setCookie("filters", "q=X", oneDayDelta).
+  //   - On load, `params = new FragmentParams(location.hash || filters)`
+  //     — so the cookie is consulted as a fallback when no hash is
+  //     present, which means a fresh visit to / still replays q=X
+  //     and filters the library to "No result" for a word that was
+  //     never a book title in the first place.
+  //
+  // We clean both sides (hash + cookie). Other filters (lang, category,
+  // tag) are preserved so the user's language/category selection
+  // survives a round trip.
+  function stripQFromParams(paramsStr) {
+    var params = new URLSearchParams(paramsStr || "");
+    if (!params.has("q")) return null;
+    params.delete("q");
+    return params.toString();
+  }
+
+  function clearQFromHash() {
+    if (!(window.history && window.history.replaceState)) return;
+    var frag = window.location.hash || "";
+    if (frag[0] === "#") frag = frag.substring(1);
+    var rest = stripQFromParams(frag);
+    if (rest === null) return;
+    var clean = window.location.pathname + window.location.search +
+      (rest ? "#" + rest : "");
+    window.history.replaceState(null, "", clean);
+  }
+
+  function clearQFromCookie() {
+    // Cookie name matches `filterCookieName` in the stock index.js.
+    var cookies = document.cookie.split("; ");
+    var raw = null;
+    for (var i = 0; i < cookies.length; i++) {
+      if (cookies[i].indexOf("filters=") === 0) {
+        raw = cookies[i].substring("filters=".length);
+        break;
+      }
+    }
+    if (raw === null) return;
+    var value;
+    try {
+      value = decodeURIComponent(raw);
+    } catch (e) {
+      value = raw;
+    }
+    var rest = stripQFromParams(value);
+    if (rest === null) return;
+    // Rewrite the cookie with q removed. Match stock's 1-day expiry
+    // and site-wide path so the new value fully replaces the old.
+    var exp = new Date(Date.now() + 86400000).toUTCString();
+    document.cookie = "filters=" + encodeURIComponent(rest) +
+      "; expires=" + exp + "; path=/";
+  }
+
   function handleSubmit(e) {
     var form = e.target;
     if (!form || form.id !== "kiwixSearchForm") return;
@@ -70,6 +129,9 @@
     var submitBtn = document.getElementById("searchButton");
     if (submitBtn) submitBtn.disabled = true;
 
+    clearQFromHash();
+    clearQFromCookie();
+
     booksPromise.then(function (books) {
       var url = "/search?pattern=" + encodeURIComponent(q);
       for (var i = 0; i < books.length; i++) {
@@ -79,6 +141,25 @@
     });
   }
   window.addEventListener("submit", handleSubmit, true);
+
+  // Also clean up on every welcome-page load, not just on submit.
+  // A user who ran the stock library filter before this shim was
+  // installed still has a 1-day "filters" cookie with q=something
+  // on their machine — without this sweep, their first visit after
+  // the upgrade would still replay the stale filter from the cookie
+  // and look like "everything is missing". Safe because q has no
+  // meaning for us anymore; the search box is FTS now.
+  function sweepStaleFilter() {
+    // Only act on the welcome page, not search results or ZIM content.
+    if (!document.getElementById("kiwixSearchForm")) return;
+    clearQFromHash();
+    clearQFromCookie();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", sweepStaleFilter);
+  } else {
+    sweepStaleFilter();
+  }
 
   // Rebrand the placeholder so the change in behavior is discoverable.
   // The stock updateUIText() may run asynchronously after i18n loads
