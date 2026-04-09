@@ -484,19 +484,49 @@ html.krull-dark ._page h6 {
   color: #e6edf3 !important;
   border-color: #1f2733 !important;
 }
-/* DevDocs callout / note / blockquote boxes
- * (git .callout.quickref, react .note, mariadb .graybox, rust blockquote) */
+/* DevDocs callout / note / blockquote / alert boxes
+ * Covers git .callout.quickref, react .note, mariadb .graybox,
+ * rust blockquote, and the full DocBook alert family used by PHP
+ * DevDocs (.warning, .caution, .tip, .hint, .important, .simpara
+ * inside any of those). */
 html.krull-dark ._page .note,
 html.krull-dark ._page .callout,
 html.krull-dark ._page .graybox,
+html.krull-dark ._page .warning,
+html.krull-dark ._page .caution,
+html.krull-dark ._page .tip,
+html.krull-dark ._page .hint,
+html.krull-dark ._page .important,
+html.krull-dark ._page .admonition,
 html.krull-dark ._page blockquote {
   background-color: #11151c !important;
   color: #e6edf3 !important;
   border: 1px solid #1f2733 !important;
 }
+/* Red/orange left border to keep warnings visually distinct from
+ * plain notes — essential for docs where the severity matters. */
+html.krull-dark ._page .warning,
+html.krull-dark ._page .caution {
+  border-left: 4px solid #d97060 !important;
+}
+html.krull-dark ._page .tip,
+html.krull-dark ._page .hint {
+  border-left: 4px solid #6fb37e !important;
+}
+html.krull-dark ._page .note,
+html.krull-dark ._page .important,
+html.krull-dark ._page .admonition {
+  border-left: 4px solid #d4a574 !important;
+}
 html.krull-dark ._page .note a,
 html.krull-dark ._page .callout a,
 html.krull-dark ._page .graybox a,
+html.krull-dark ._page .warning a,
+html.krull-dark ._page .caution a,
+html.krull-dark ._page .tip a,
+html.krull-dark ._page .hint a,
+html.krull-dark ._page .important a,
+html.krull-dark ._page .admonition a,
 html.krull-dark ._page blockquote a {
   color: #6fb3d2 !important;
 }
