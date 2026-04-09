@@ -146,8 +146,11 @@ services:
     volumes:
       - ./kiwix-front/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./kiwix-front/favicon:/usr/share/nginx/favicon:ro
-      - ./kiwix-front/dark.css:/usr/share/nginx/krull/dark.css:ro
-      - ./kiwix-front/toggle.js:/usr/share/nginx/krull/toggle.js:ro
+      # Directory mount (not single-file) so edits to dark.css / toggle.js
+      # are picked up live without recreating the container. Single-file
+      # bind mounts pin to the host inode, and atomic-replace editors
+      # (most of them) orphan that inode on every save.
+      - ./kiwix-front/krull:/usr/share/nginx/krull:ro
 
   krull-updater:
     build: ./krull-updater

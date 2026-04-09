@@ -1,0 +1,431 @@
+/*
+ * Krull dark theme for kiwix-serve.
+ *
+ * Scoped to html.krull-dark so the toggle button can flip between
+ * dark and light by toggling the class on the html element.
+ *
+ * Selectors mirror the ones in kiwix-serve's bundled kiwix.css and
+ * index.css. We use !important liberally because we're loading
+ * AFTER kiwix's own stylesheets and don't want to fight specificity
+ * battles every time kiwix tweaks its CSS upstream.
+ */
+
+html.krull-dark,
+html.krull-dark body {
+  background: #0b0e14 !important;
+  color: #e6edf3 !important;
+}
+
+html.krull-dark a { color: #6fb3d2; }
+html.krull-dark a:hover { color: #d4a574; }
+html.krull-dark a:visited { color: #b88b9e; }
+
+html.krull-dark ::selection {
+  background-color: #d4a574 !important;
+  color: #0b0e14 !important;
+}
+
+/* Top nav strip on the welcome page */
+html.krull-dark .kiwixNav {
+  background-color: #11151c !important;
+  border-bottom: 1px solid #1f2733;
+}
+
+/* Filter dropdowns */
+html.krull-dark .kiwixNav__select {
+  background: #161b25 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .kiwixNav__select::after {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .kiwixNav__kiwixFilter {
+  background: #161b25 !important;
+  color: #e6edf3 !important;
+}
+html.krull-dark .kiwixNav__kiwixFilter option {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+}
+
+/* Search input */
+html.krull-dark .kiwixSearch {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .kiwixSearch::placeholder {
+  color: #5a6577 !important;
+}
+
+/* Buttons */
+html.krull-dark .kiwixButton {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .kiwixButton:hover {
+  background-color: #1c2230 !important;
+  border-color: #d4a574 !important;
+}
+
+/* Result count line */
+html.krull-dark .kiwixHomeBody__results {
+  color: #8b96a8 !important;
+}
+
+/* Book/result tiles */
+html.krull-dark .book {
+  border-color: #1f2733 !important;
+}
+html.krull-dark .book__wrapper {
+  background-color: #11151c !important;
+  border-color: #1f2733 !important;
+  color: #e6edf3 !important;
+}
+html.krull-dark .book__title,
+html.krull-dark .book__header,
+html.krull-dark .book__name { color: #e6edf3 !important; }
+html.krull-dark .book__description { color: #8b96a8 !important; }
+html.krull-dark .book__tags,
+html.krull-dark .book__languageTag,
+html.krull-dark .book__publisher { color: #5a6577 !important; }
+html.krull-dark .book__download {
+  color: #d4a574 !important;
+}
+
+/* Modal */
+html.krull-dark .modal-wrapper {
+  background-color: rgba(0, 0, 0, 0.7) !important;
+}
+html.krull-dark .modal {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .modal-heading {
+  background-color: #11151c !important;
+  color: #d4a574 !important;
+}
+
+/* Loader spinner */
+html.krull-dark .loader {
+  background: rgba(11, 14, 20, 0.8) !important;
+  color: #e6edf3 !important;
+}
+html.krull-dark .spinner {
+  border-color: #1f2733 !important;
+  border-top-color: #d4a574 !important;
+}
+
+/* Inline-document chrome (article viewer toolbar) */
+html.krull-dark .top-bar,
+html.krull-dark .navbar,
+html.krull-dark .navbar-brand,
+html.krull-dark #kiwixtoolbar,
+html.krull-dark #kiwixtoolbarwrapper {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark .kiwix #kiwixtoolbar button,
+html.krull-dark .kiwix #kiwixtoolbar input[type="submit"] {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .kiwix #kiwixtoolbar #kiwixsearchform input[type="text"] {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark #kiwixsearchbox::placeholder {
+  color: #5a6577 !important;
+}
+html.krull-dark #autoComplete_list_1,
+html.krull-dark ul[id^="autoComplete_list"] {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+
+/* iframe wrapper for article view — match body so there's no flash of
+ * white between navigations. The ZIM-content overrides below make the
+ * content itself legible on dark, so we no longer need to force white. */
+html.krull-dark iframe,
+html.krull-dark #content_iframe {
+  background: #0b0e14 !important;
+}
+
+/* =====================================================================
+   ZIM content overrides
+   =====================================================================
+   dark.css is injected into every iframe document too (nginx sub_filter
+   applies to all HTML). These rules neutralise light backgrounds inside
+   ZIM content without touching the krull-kiwix library chrome above.
+   Scoped to html.krull-dark so the light theme keeps publisher colors. */
+
+/* --- Tables: strip publisher light backgrounds, keep structure ------ */
+html.krull-dark table,
+html.krull-dark tbody,
+html.krull-dark thead,
+html.krull-dark tfoot,
+html.krull-dark tr,
+html.krull-dark td,
+html.krull-dark th {
+  background-color: transparent !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+
+/* Wikipedia / MediaWiki infoboxes and navboxes */
+html.krull-dark .infobox,
+html.krull-dark .infobox-v2,
+html.krull-dark .navbox,
+html.krull-dark .sidebar,
+html.krull-dark .wikitable {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark .infobox caption,
+html.krull-dark .wikitable th {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+
+/* --- Form controls inside ZIM content ------------------------------- */
+html.krull-dark input[type="text"],
+html.krull-dark input[type="search"],
+html.krull-dark input:not([type]),
+html.krull-dark select,
+html.krull-dark textarea {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark input::placeholder,
+html.krull-dark textarea::placeholder {
+  color: #5a6577 !important;
+}
+
+/* --- Code blocks ---------------------------------------------------- */
+html.krull-dark pre,
+html.krull-dark code,
+html.krull-dark kbd,
+html.krull-dark samp {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+
+/* --- MediaWiki callout boxes (ArchWiki Tip/Note/Warning etc.) ------- */
+html.krull-dark .archwiki-template-box,
+html.krull-dark .mw-parser-output .tip,
+html.krull-dark .mw-parser-output .note,
+html.krull-dark .mw-parser-output .warning,
+html.krull-dark [class*="box-tip"],
+html.krull-dark [class*="box-note"],
+html.krull-dark [class*="box-warning"] {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #2a4a35 !important;
+}
+
+/* --- Gutenberg LCC skin (pure-skin-gutenberg) ----------------------- */
+/* Red header banner and red list stripes */
+html.krull-dark body > header,
+html.krull-dark .list-stripe {
+  background-color: #11151c !important;
+  color: #d4a574 !important;
+  border-color: #1f2733 !important;
+}
+/* Alternating row stripes in the book tables */
+html.krull-dark tr.odd,
+html.krull-dark tr.even {
+  background-color: transparent !important;
+}
+html.krull-dark tr.odd:hover,
+html.krull-dark tr.even:hover {
+  background-color: #161b25 !important;
+}
+/* DataTables pagination current-page pill */
+html.krull-dark .paginate_button.current {
+  background-color: #1c2230 !important;
+  color: #d4a574 !important;
+  border-color: #d4a574 !important;
+}
+/* jQuery-UI autocomplete dropdown */
+html.krull-dark .ui-autocomplete.ui-widget-content {
+  background-color: #161b25 !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark .ui-menu-item a,
+html.krull-dark .ui-menu-item-wrapper {
+  color: #e6edf3 !important;
+}
+html.krull-dark .ui-state-active,
+html.krull-dark .ui-state-focus {
+  background-color: #1c2230 !important;
+  color: #d4a574 !important;
+}
+/* Gutenberg content spinner overlay (not the kiwix library loader) */
+html.krull-dark .spinner {
+  background-color: #0b0e14 !important;
+  color: #e6edf3 !important;
+}
+
+/* --- MediaWiki outer containers (Wikipedia/Wikivoyage/Wiktionary/
+ *     Appropedia/energypedia) ------------------------------------------
+ * The outermost `.mw-page-container` ships a hard-coded white background.
+ * Other content boxes on MediaWiki main pages use .main-page-* classes. */
+html.krull-dark .mw-page-container,
+html.krull-dark .mw-page-container-inner,
+html.krull-dark .mw-body,
+html.krull-dark .mw-body-content,
+html.krull-dark .main-page-body-text,
+html.krull-dark .main-page-intro,
+html.krull-dark .main-page-project,
+html.krull-dark .main-page-list-of-wiktionaries,
+html.krull-dark .vector-body,
+html.krull-dark .mw-parser-output,
+html.krull-dark #siteContainer,
+html.krull-dark #siteContainer div,
+html.krull-dark #siteSub {
+  background-color: transparent !important;
+  background: transparent !important;
+  color: #e6edf3 !important;
+}
+/* Wikivoyage main-page "Discover / Get involved" box uses IDs, not
+ * classes, for its light-blue background. */
+html.krull-dark [id^="bottombox-"],
+html.krull-dark [id^="topbox-"],
+html.krull-dark [id^="mainpagebox-"] {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+
+/* --- Broad text-color override for ZIMs that set explicit dark text ---
+ * Wikivoyage/Wiktionary/Appropedia set `color: rgb(32,33,34)` and similar
+ * directly on heading/paragraph/list/inline tags, which wins over the
+ * body color. Force readable color but exclude code/pre descendants so
+ * syntax highlighting survives. */
+html.krull-dark h1,
+html.krull-dark h2,
+html.krull-dark h3,
+html.krull-dark h4,
+html.krull-dark h5,
+html.krull-dark h6,
+html.krull-dark p,
+html.krull-dark li,
+html.krull-dark dd,
+html.krull-dark dt,
+html.krull-dark b,
+html.krull-dark i,
+html.krull-dark em,
+html.krull-dark strong,
+html.krull-dark small,
+html.krull-dark figcaption,
+html.krull-dark blockquote,
+html.krull-dark div,
+html.krull-dark section,
+html.krull-dark article,
+html.krull-dark aside,
+html.krull-dark header,
+html.krull-dark footer,
+html.krull-dark main,
+html.krull-dark nav {
+  color: #e6edf3 !important;
+}
+/* Re-assert link colors after the broad override above. The :not()
+ * filters keep external-link classes from staying near-black. */
+html.krull-dark a,
+html.krull-dark a.external,
+html.krull-dark a.extiw,
+html.krull-dark a.mw-redirect,
+html.krull-dark .mw-parser-output a {
+  color: #6fb3d2 !important;
+}
+html.krull-dark a:visited,
+html.krull-dark .mw-parser-output a:visited {
+  color: #b88b9e !important;
+}
+html.krull-dark a:hover {
+  color: #d4a574 !important;
+}
+/* New-page (red) links stay red-ish but lifted so they're visible */
+html.krull-dark a.new,
+html.krull-dark .mw-parser-output a.new {
+  color: #d97060 !important;
+}
+
+/* --- zimgit card list (Medical Library, Water Treatment, Food for
+ *     Preppers, Post Disaster Resource Library) ---------------------- *
+ * These libraries render each document as a bare `<li>` inside
+ * `ul.event-list#doc-list` with a white background. */
+html.krull-dark .event-list > li,
+html.krull-dark #doc-list > li {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark .event-list > li:hover,
+html.krull-dark #doc-list > li:hover {
+  background-color: #161b25 !important;
+  border-color: #d4a574 !important;
+}
+/* The filter-by-category modal content panel in zimgit */
+html.krull-dark .modal-content {
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+
+/* iFixit section dividers (e.g. "What do you need to fix?") ship with
+ * a white background pill that sits on top of the dark body. */
+html.krull-dark .section-divider,
+html.krull-dark .primary-divider {
+  background-color: transparent !important;
+}
+html.krull-dark .section-divider p {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+}
+
+/* ---------- Theme toggle button ---------- */
+#krull-theme-toggle {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid #1f2733;
+  background: #161b25;
+  color: #d4a574;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 200ms ease, background 200ms ease, border-color 200ms ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+#krull-theme-toggle:hover {
+  transform: scale(1.08);
+  border-color: #d4a574;
+}
+html.krull-light #krull-theme-toggle {
+  background: #ffffff;
+  color: #11151c;
+  border-color: #d0d0d0;
+}
+html.krull-light #krull-theme-toggle:hover {
+  border-color: #11151c;
+}
