@@ -275,13 +275,27 @@ download_base_tiles() {
     echo ""
 
     if [ -f "$TILES_DIR/$FILENAME" ]; then
-        echo "File already exists. Re-download? (y/n)"
-        read -r REPLY
-        if [ "$REPLY" != "y" ]; then
-            echo "Cancelled."
-            return 0
+        if [ -t 0 ]; then
+            # Interactive terminal — prompt before wiping.
+            echo "File already exists. Re-download? (y/n)"
+            read -r REPLY
+            if [ "$REPLY" != "y" ]; then
+                echo "Cancelled."
+                return 0
+            fi
+            rm "$TILES_DIR/$FILENAME"
+        else
+            # Non-interactive (installer / CI / piped stdin). A file on
+            # disk from a previous run means we should RESUME, not wipe
+            # and restart. dl_run_curl HEAD-probes the upstream and
+            # wipes the partial itself if ETag/Last-Modified/size have
+            # drifted (see _dl_probe_and_reconcile in lib/download-log.sh),
+            # so leaving the file in place is safe. Previously this
+            # branch tripped `read -r` on closed stdin which, under
+            # `set -e`, killed the script with exit 1 before curl ran
+            # — so the library's "Resume" button did nothing.
+            echo "[*] Existing file detected; resuming via curl -C -"
         fi
-        rm "$TILES_DIR/$FILENAME"
     fi
 
     install_pmtiles
@@ -317,13 +331,19 @@ download_terrain() {
         echo ""
 
         if [ -f "$TILES_DIR/$FILENAME" ]; then
-            echo "File already exists. Re-download? (y/n)"
-            read -r REPLY
-            if [ "$REPLY" != "y" ]; then
-                echo "Cancelled."
-                return 0
+            if [ ! -t 0 ]; then
+                # Non-interactive: resume the partial instead of bailing.
+                # See the matching comment in download_base_region().
+                echo "[*] Existing file detected; resuming via curl -C -"
+            else
+                echo "File already exists. Re-download? (y/n)"
+                read -r REPLY
+                if [ "$REPLY" != "y" ]; then
+                    echo "Cancelled."
+                    return 0
+                fi
+                rm "$TILES_DIR/$FILENAME"
             fi
-            rm "$TILES_DIR/$FILENAME"
         fi
 
         dl_state_add "$TILES_DIR/$FILENAME" 734003200  # ~700 MB
