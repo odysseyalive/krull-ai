@@ -420,6 +420,87 @@ html.krull-dark .section-divider p {
   border: 1px solid #1f2733 !important;
 }
 
+/* --- DevDocs (per-book index/article pages) -------------------------
+ * DevDocs uses underscore-prefixed class names for its chrome:
+ * ._sidebar (left nav), ._list-item, ._list-dir, ._attribution-p
+ * (the "copyright" box at the bottom of landing pages), etc. Some
+ * per-language bundles (e.g. PHP) ship with a light-gray sidebar
+ * that slips past the earlier generic overrides; normalise them all. */
+html.krull-dark ._app,
+html.krull-dark ._container,
+html.krull-dark ._content,
+html.krull-dark ._page,
+html.krull-dark ._sidebar {
+  background-color: #0b0e14 !important;
+  color: #e6edf3 !important;
+}
+html.krull-dark ._list,
+html.krull-dark ._list-item,
+html.krull-dark ._list-dir,
+html.krull-dark ._list-sub-dir,
+html.krull-dark ._list-sub {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark ._list-item:hover,
+html.krull-dark ._list-dir:hover {
+  background-color: #161b25 !important;
+}
+html.krull-dark ._list-item._active,
+html.krull-dark ._list-item[aria-selected="true"] {
+  background-color: #1c2230 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark ._attribution,
+html.krull-dark ._attribution-p,
+html.krull-dark ._attribution-copyright,
+html.krull-dark ._attribution-license {
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark ._attribution a {
+  color: #6fb3d2 !important;
+}
+/* DevDocs code / pre samples inside articles */
+html.krull-dark ._highlight,
+html.krull-dark ._pre-clip,
+html.krull-dark pre.language-php,
+html.krull-dark pre.prettyprint {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+}
+/* DevDocs per-book headings: Go, MariaDB, nginx, React, TypeScript
+ * and others ship unclassed <h2>/<h3>/<h4> with a styled light banner
+ * background. Strip the banner inside article pages only. */
+html.krull-dark ._page h1,
+html.krull-dark ._page h2,
+html.krull-dark ._page h3,
+html.krull-dark ._page h4,
+html.krull-dark ._page h5,
+html.krull-dark ._page h6 {
+  background-color: transparent !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+/* DevDocs callout / note / blockquote boxes
+ * (git .callout.quickref, react .note, mariadb .graybox, rust blockquote) */
+html.krull-dark ._page .note,
+html.krull-dark ._page .callout,
+html.krull-dark ._page .graybox,
+html.krull-dark ._page blockquote {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark ._page .note a,
+html.krull-dark ._page .callout a,
+html.krull-dark ._page .graybox a,
+html.krull-dark ._page blockquote a {
+  color: #6fb3d2 !important;
+}
+
 /* ---------- Theme toggle button ---------- */
 #krull-theme-toggle {
   position: fixed;
