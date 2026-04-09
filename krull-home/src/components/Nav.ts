@@ -1,4 +1,5 @@
 import { UpdateButton } from "./UpdateButton";
+import { HardwarePill } from "./HardwarePill";
 
 /** Persistent top navigation. Sticky, glassy. */
 const LINKS: Array<{ href: string; label: string }> = [
@@ -39,10 +40,12 @@ export function Nav(currentPath: string): HTMLElement {
     center.append(li);
   }
 
-  // Right-side actions: update button + (room for future status indicators).
+  // Right-side actions: hardware status pill (GPU/CPU + free memory)
+  // sits to the LEFT of the Update button so the user sees their
+  // available memory budget at a glance from anywhere in the app.
   const actions = document.createElement("div");
   actions.className = "krull-nav__actions";
-  actions.append(UpdateButton());
+  actions.append(HardwarePill(), UpdateButton());
 
   inner.append(brand, center, actions);
   nav.append(inner);

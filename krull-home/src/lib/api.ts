@@ -152,6 +152,11 @@ export async function deletePackage(
   return (await res.json()) as { jobId: string; position: number };
 }
 
+export interface ContextSuggestion {
+  numCtx: number;
+  compactLimit: number;
+  rationale: string;
+}
 export interface RecommendedModel {
   key: string;
   label: string;
@@ -160,6 +165,7 @@ export interface RecommendedModel {
   bestFor: string;
   installed: boolean;
   active: boolean;
+  contextSuggestion?: ContextSuggestion;
 }
 export interface ModelsPayload {
   active: string;
@@ -171,6 +177,38 @@ export async function fetchModels(): Promise<ModelsPayload> {
   const res = await fetch("/api/models");
   if (!res.ok) throw new Error(`/api/models -> ${res.status}`);
   return (await res.json()) as ModelsPayload;
+}
+
+export interface HardwareRam {
+  totalBytes: number;
+  availableBytes: number;
+}
+export interface HardwareGpu {
+  vendor: "nvidia" | "none";
+  name?: string;
+  totalBytes?: number;
+  freeBytes?: number;
+}
+export interface Hardware {
+  ram: HardwareRam;
+  gpu: HardwareGpu;
+}
+
+export async function fetchHardware(): Promise<{ hardware: Hardware }> {
+  const res = await fetch("/api/system/hardware");
+  if (!res.ok) throw new Error(`/api/system/hardware -> ${res.status}`);
+  return (await res.json()) as { hardware: Hardware };
+}
+
+export async function deleteModel(key: string): Promise<{ ok: true; deleted: string }> {
+  const res = await fetch(`/api/models/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`delete failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { ok: true; deleted: string };
 }
 
 export async function pullModel(key: string): Promise<{ jobId: string }> {

@@ -4,9 +4,11 @@ import { toast } from "../components/Toast";
 import { ModelPicker } from "../components/ModelPicker";
 import {
   fetchEnv,
+  fetchModels,
   restartContainer,
   saveEnv,
   streamJob,
+  type ContextSuggestion,
   type EnvField,
   type EnvPayload,
 } from "../lib/api";
@@ -34,12 +36,14 @@ export async function SettingsPage(): Promise<HTMLElement> {
   root.append(modelSection);
 
   // When the picker activates a new model it dispatches this event so the
-  // OLLAMA_MODEL form input below stays in sync. Otherwise saving the env
-  // form afterwards would silently overwrite the picker's change.
+  // OLLAMA_MODEL form input below stays in sync, AND so the per-model
+  // context-window suggestion blocks under OLLAMA_NUM_CTX and
+  // CONTEXT_COMPACT_LIMIT can re-render against the new brain's payload.
   const onModelChanged = (e: Event) => {
     const detail = (e as CustomEvent<{ key: string }>).detail;
     const input = inputs.get("OLLAMA_MODEL");
     if (input && detail?.key) input.value = detail.key;
+    void refreshSuggestions();
   };
   window.addEventListener("krull:model-changed", onModelChanged);
   // Best-effort cleanup when the page is replaced.
@@ -81,6 +85,10 @@ export async function SettingsPage(): Promise<HTMLElement> {
   form.addEventListener("submit", (e) => e.preventDefault());
 
   const inputs = new Map<string, HTMLInputElement>();
+  // Container for the per-field suggestion block — keyed by env var name.
+  // refreshSuggestions() reads/writes these slots whenever the active
+  // brain changes (initial load + krull:model-changed).
+  const suggestionSlots = new Map<string, HTMLDivElement>();
 
   for (const [groupName, fields] of groups) {
     const grp = document.createElement("fieldset");
@@ -91,10 +99,198 @@ export async function SettingsPage(): Promise<HTMLElement> {
     grp.append(legend);
 
     for (const field of fields) {
-      grp.append(renderField(field, payload.values[field.key] ?? "", inputs));
+      grp.append(
+        renderField(field, payload.values[field.key] ?? "", inputs, suggestionSlots),
+      );
     }
     form.append(grp);
   }
+
+  // Active-brain context suggestion: rendered into the slot under
+  // OLLAMA_NUM_CTX and CONTEXT_COMPACT_LIMIT. Re-runs on krull:model-changed.
+  async function refreshSuggestions(): Promise<void> {
+    let activeKey = "";
+    let suggestion: ContextSuggestion | undefined;
+    let modelLabel: string | undefined;
+    try {
+      const data = await fetchModels();
+      activeKey = data.active;
+      const active = data.recommended.find((m) => m.key === activeKey);
+      suggestion = active?.contextSuggestion;
+      modelLabel = active?.label;
+    } catch {
+      // Hide all hints rather than showing stale suggestions on a fetch error.
+    }
+    renderSuggestion("OLLAMA_NUM_CTX", "numCtx", suggestion, activeKey, modelLabel);
+    renderSuggestion("CONTEXT_COMPACT_LIMIT", "compactLimit", suggestion, activeKey, modelLabel);
+  }
+
+  /**
+   * Friendly human-readable name for the active brain. Falls back to the
+   * raw ollama key if the active model isn't in the blessed list.
+   */
+  function brainDisplayName(activeKey: string, modelLabel: string | undefined): string {
+    return modelLabel ?? activeKey;
+  }
+
+  function renderSuggestion(
+    fieldKey: string,
+    valueKey: "numCtx" | "compactLimit",
+    suggestion: ContextSuggestion | undefined,
+    activeKey: string,
+    modelLabel?: string,
+  ): void {
+    const slot = suggestionSlots.get(fieldKey);
+    if (!slot) return;
+    slot.replaceChildren();
+    if (!suggestion) return;
+
+    const value = suggestion[valueKey];
+    const isCompact = valueKey === "compactLimit";
+    const fmtNumber = (n: number) => n.toLocaleString("en-US");
+
+    const wrap = document.createElement("div");
+    wrap.className = "env-field__suggestion";
+    if (isCompact) wrap.classList.add("env-field__suggestion--compact");
+
+    // Eyebrow ─── RECOMMENDED FOR <BRAIN NAME> ──────────────────────
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "env-field__suggestion-eyebrow";
+    const eyebrowText = document.createElement("span");
+    eyebrowText.textContent = isCompact ? "Auto-compact pairs with" : "Recommended for";
+    const eyebrowBrain = document.createElement("span");
+    eyebrowBrain.className = "env-field__suggestion-eyebrow-brain";
+    eyebrowBrain.textContent = brainDisplayName(activeKey, modelLabel);
+    eyebrow.append(eyebrowText, eyebrowBrain);
+
+    // Big number with serif italic unit
+    const figure = document.createElement("p");
+    figure.className = "env-field__suggestion-figure";
+    const numberEl = document.createElement("span");
+    numberEl.className = "env-field__suggestion-number";
+    numberEl.textContent = fmtNumber(value);
+    const unitEl = document.createElement("span");
+    unitEl.className = "env-field__suggestion-unit";
+    unitEl.textContent = "tokens";
+    figure.append(numberEl, unitEl);
+
+    // Meta column — different copy for the two variants
+    const meta = document.createElement("div");
+    meta.className = "env-field__suggestion-meta";
+    if (isCompact) {
+      const line = document.createElement("p");
+      line.className = "env-field__suggestion-meta-line";
+      const pct = Math.round((suggestion.compactLimit / suggestion.numCtx) * 100);
+      const strong = document.createElement("strong");
+      strong.textContent = `${pct}%`;
+      line.append(
+        strong,
+        document.createTextNode(
+          " of the suggested context window — auto-compact fires here so the model never sees a hard wall",
+        ),
+      );
+      meta.append(line);
+    } else {
+      const line1 = document.createElement("p");
+      line1.className = "env-field__suggestion-meta-line";
+      const k = Math.round(suggestion.numCtx / 1024);
+      const strong = document.createElement("strong");
+      strong.textContent = `${k}k`;
+      line1.append(strong, document.createTextNode(" tokens of working memory"));
+
+      const line2 = document.createElement("p");
+      line2.className = "env-field__suggestion-meta-line";
+      line2.textContent = `Pairs with auto-compact at ${fmtNumber(suggestion.compactLimit)}`;
+      meta.append(line1, line2);
+    }
+
+    // Apply button — gold "Apply →" CTA, flips to green "Applied ✓"
+    // when the input value already matches the suggestion. State is
+    // reactive: if the user edits the input afterward, the button reverts
+    // to its gold form so they can re-apply with one click.
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "env-field__suggestion-apply";
+    const expected = String(value);
+
+    /** Flip the button between Apply→Applied based on input.value. */
+    const syncButtonState = (justApplied: boolean) => {
+      const input = inputs.get(fieldKey);
+      const matches = input?.value === expected;
+      if (matches) {
+        apply.classList.add("env-field__suggestion-apply--applied");
+        apply.textContent = "Applied";
+        apply.title = `${fieldKey} matches the suggested value (${fmtNumber(value)})`;
+        if (justApplied) {
+          // Snap-in micro-animation only on the actual click transition,
+          // not on initial render. animationend cleanup handler removes
+          // the class so re-clicks always re-trigger.
+          apply.classList.add("env-field__suggestion-apply--just-applied");
+          apply.addEventListener(
+            "animationend",
+            () => apply.classList.remove("env-field__suggestion-apply--just-applied"),
+            { once: true },
+          );
+        }
+      } else {
+        apply.classList.remove("env-field__suggestion-apply--applied");
+        apply.classList.remove("env-field__suggestion-apply--just-applied");
+        apply.textContent = "Apply";
+        apply.title = `Set ${fieldKey} to ${fmtNumber(value)}`;
+      }
+    };
+
+    apply.addEventListener("click", () => {
+      const input = inputs.get(fieldKey);
+      if (!input) return;
+      // No-op if the value already matches — the button is already in
+      // its applied state and clicking it again would be a lie.
+      if (input.value === expected) return;
+      input.value = expected;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // Pulse the input briefly so the user sees exactly which field got
+      // the new value. The class auto-cleans on animationend so repeated
+      // applies always re-trigger the animation.
+      input.classList.add("env-field__input--pulse");
+      input.addEventListener(
+        "animationend",
+        () => input.classList.remove("env-field__input--pulse"),
+        { once: true },
+      );
+      syncButtonState(true);
+      toast(
+        `${fieldKey} set to ${fmtNumber(value)}. Click "Save changes" to write.`,
+        "info",
+      );
+    });
+
+    // Reactive sync: when the user edits the input directly, the button
+    // should reflect whether the current value still matches the suggestion.
+    const input = inputs.get(fieldKey);
+    if (input) {
+      input.addEventListener("input", () => syncButtonState(false));
+    }
+    // Initial state — runs after the form is built so input.value is set.
+    syncButtonState(false);
+
+    wrap.append(eyebrow, figure, meta, apply);
+
+    // Rationale (only on the primary OLLAMA_NUM_CTX card — the compact
+    // variant inherits the reasoning from its sibling and doesn't repeat).
+    if (!isCompact) {
+      const why = document.createElement("p");
+      why.className = "env-field__suggestion-why";
+      why.textContent = suggestion.rationale;
+      wrap.append(why);
+    }
+
+    slot.append(wrap);
+  }
+
+  // Initial render — runs once after the form is built. Don't await; the
+  // suggestion is non-critical UI and we don't want to block the page on
+  // a second API call.
+  void refreshSuggestions();
 
   // Render extras (keys present in .env but not in schema)
   if (payload.extras.length) {
@@ -113,7 +309,9 @@ export async function SettingsPage(): Promise<HTMLElement> {
         group: "Custom",
         affects: [],
       };
-      extras.append(renderField(synthetic, payload.values[key] ?? "", inputs));
+      extras.append(
+        renderField(synthetic, payload.values[key] ?? "", inputs, suggestionSlots),
+      );
     }
     form.append(extras);
   }
@@ -214,6 +412,7 @@ function renderField(
   field: EnvField,
   value: string,
   bag: Map<string, HTMLInputElement>,
+  suggestionSlots: Map<string, HTMLDivElement>,
 ): HTMLElement {
   const row = document.createElement("div");
   row.className = "env-field";
@@ -267,5 +466,17 @@ function renderField(
   bag.set(field.key, input);
 
   row.append(labelRow, desc, inputWrap);
+
+  // Reserve an empty slot under the two context-management fields. The
+  // settings page populates these via refreshSuggestions() based on the
+  // active brain's contextSuggestion payload — there's nothing to render
+  // here at field-build time, just an attachment point.
+  if (field.key === "OLLAMA_NUM_CTX" || field.key === "CONTEXT_COMPACT_LIMIT") {
+    const slot = document.createElement("div");
+    slot.className = "env-field__suggestion-slot";
+    suggestionSlots.set(field.key, slot);
+    row.append(slot);
+  }
+
   return row;
 }

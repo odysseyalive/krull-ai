@@ -11,12 +11,25 @@
  * out to `ollama list` so we get clean JSON instead of TTY-mangled text. */
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://krull-ollama:11434";
 
+/**
+ * Optional per-model recommendation for OLLAMA_NUM_CTX and CONTEXT_COMPACT_LIMIT.
+ * Surfaced on the picker card so the user can see the model's "natural" context
+ * budget alongside the VRAM tier. Not auto-applied — env settings still come
+ * from the env editor; this is a hint, not a side-effect.
+ */
+export interface ContextSuggestion {
+  numCtx: number;
+  compactLimit: number;
+  rationale: string;
+}
+
 export interface RecommendedModel {
   key: string;
   label: string;
   vram: string;
   description: string;
   bestFor: string;
+  contextSuggestion?: ContextSuggestion;
 }
 
 export const RECOMMENDED_MODELS: RecommendedModel[] = [
@@ -40,6 +53,21 @@ export const RECOMMENDED_MODELS: RecommendedModel[] = [
     vram: "~16 GB",
     description: "Best quality variant. Slower responses, sharper reasoning.",
     bestFor: "16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX).",
+  },
+  {
+    key: "qwen3.5:35b-a3b",
+    label: "Qwen 3.5 MoE · 36B-A3B",
+    vram: "~27 GB",
+    description:
+      "Mixture-of-Experts hybrid thinking model: 36 B total weights (all resident), but only 3 B fire per token — generation runs at ~9 B-class speed on adequate VRAM. Tool calling verified end-to-end through the SSE proxy.",
+    bestFor:
+      "24 GB+ GPUs (RTX 3090/4090, A6000). Hybrid thinking model: emits a reasoning trace before each reply, so wall-clock per turn is longer than a dense 9 B even though token throughput is similar.",
+    contextSuggestion: {
+      numCtx: 131072,
+      compactLimit: 98304,
+      rationale:
+        "Same window as the dense default. KV cache lives in shared attention layers and grows the same way it would on a dense model — it isn't free just because the model is MoE. What you do get: only 3 B params fire per token, so the model stays interactive at this context size where a dense 36 B would crawl. Auto-compact at 75% as usual.",
+    },
   },
 ];
 
@@ -112,5 +140,28 @@ export async function retuneModel(
       const { done } = await reader.read();
       if (done) break;
     }
+  }
+}
+
+/**
+ * Delete a locally-pulled Ollama model. Calls Ollama's HTTP delete endpoint
+ * directly — same channel as listInstalledModels and retuneModel — so it
+ * works without shelling out to docker exec.
+ *
+ * Throws if the model doesn't exist or the daemon refuses the request.
+ */
+export async function deleteInstalledModel(modelKey: string): Promise<void> {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 15000);
+  const res = await fetch(`${OLLAMA_URL}/api/delete`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: modelKey, name: modelKey }),
+    signal: ctrl.signal,
+  });
+  clearTimeout(timeout);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ollama delete failed (${res.status}): ${text.slice(-200)}`);
   }
 }

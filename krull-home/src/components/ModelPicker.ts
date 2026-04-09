@@ -2,7 +2,9 @@ import {
   fetchModels,
   pullModel,
   selectModel,
+  deleteModel,
   streamJob,
+  formatBytes,
   type ModelsPayload,
   type RecommendedModel,
 } from "../lib/api";
@@ -28,7 +30,7 @@ export function ModelPicker(): HTMLElement {
   const sub = document.createElement("p");
   sub.className = "model-picker__sub";
   sub.textContent =
-    "Three sizes of the same Qwen 3.5 Instruct model. Same architecture, same tool calling, three VRAM tiers. Pick the one that fits your GPU and Krull will pull it and wire it into the LiteLLM gateway.";
+    "Qwen 3.5 in four flavors: three dense Instruct tiers (4B/9B/27B) and a Mixture-of-Experts hybrid (36B-A3B) for big-context reasoning. Pick the one that fits your GPU and Krull will pull it and wire it into the LiteLLM gateway.";
   head.append(eyebrow, title, sub);
   wrap.append(head);
 
@@ -143,8 +145,53 @@ export function ModelPicker(): HTMLElement {
     bottom.className = "model-card__bottom";
     bottom.append(status, action);
 
+    // Removal: only offered for installed-but-not-active cards. The
+    // active model is protected — switch to a different brain first.
+    // Two-click confirmation: first click arms, second click commits.
+    // Avoids a modal but also avoids deleting 24 GB on a stray click.
+    if (model.installed && !model.active) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn--ghost btn--sm model-card__remove";
+      remove.textContent = "Remove";
+      remove.title = `Delete ${model.label} from local Ollama storage.`;
+      let armed = false;
+      let armTimer: number | undefined;
+      remove.addEventListener("click", () => {
+        if (!armed) {
+          armed = true;
+          remove.textContent = "Click again to confirm";
+          remove.classList.add("model-card__remove--armed");
+          armTimer = window.setTimeout(() => {
+            armed = false;
+            remove.textContent = "Remove";
+            remove.classList.remove("model-card__remove--armed");
+          }, 4000);
+          return;
+        }
+        if (armTimer) window.clearTimeout(armTimer);
+        void handleDelete(model, remove);
+      });
+      bottom.append(remove);
+    }
+
     card.append(top, progress, bottom);
     return card;
+  }
+
+  async function handleDelete(model: RecommendedModel, button: HTMLButtonElement) {
+    button.disabled = true;
+    button.textContent = "Removing…";
+    try {
+      await deleteModel(model.key);
+      toast(`${model.label} removed.`, "success");
+      await refresh();
+    } catch (err) {
+      toast(`Remove failed: ${(err as Error).message}`, "error", 6000);
+      button.disabled = false;
+      button.textContent = "Remove";
+      button.classList.remove("model-card__remove--armed");
+    }
   }
 
   async function handleSelect(model: RecommendedModel, button: HTMLButtonElement) {
@@ -170,18 +217,33 @@ export function ModelPicker(): HTMLElement {
   async function handlePull(model: RecommendedModel, button: HTMLButtonElement) {
     const card = button.closest(".model-card") as HTMLElement | null;
     const pLabel = card?.querySelector(".krull-progress__label") as HTMLElement | null;
-    card?.classList.add("model-card--pulling");
-    if (pLabel) pLabel.textContent = "Pulling…";
+    const pFill = card?.querySelector(".krull-progress__fill") as HTMLElement | null;
+    card?.classList.add("model-card--pulling", "model-card--pulling-determinate");
+    if (pLabel) pLabel.textContent = "Starting…";
+    if (pFill) pFill.style.width = "0%";
     button.disabled = true;
     button.textContent = "Starting…";
     try {
       const { jobId } = await pullModel(model.key);
       const stop = streamJob(jobId, async (ev) => {
         if (ev.phase === "downloading") {
-          button.textContent = "Pulling…";
-          if (pLabel) pLabel.textContent = "Pulling model from registry…";
+          // Real per-byte progress when ollama gives us total + completed,
+          // otherwise fall back to whatever status string the daemon sent
+          // (e.g. "pulling manifest", "verifying sha256 digest", "writing
+          // manifest", "Applying tuned parameters…").
+          if (typeof ev.percent === "number" && typeof ev.total === "number" && ev.total > 0) {
+            if (pFill) pFill.style.width = `${ev.percent}%`;
+            const completed = ev.bytes ?? 0;
+            if (pLabel) pLabel.textContent = `${ev.percent}%  ·  ${formatBytes(completed)} / ${formatBytes(ev.total)}`;
+            button.textContent = `Pulling ${ev.percent}%`;
+          } else if (ev.message) {
+            if (pLabel) pLabel.textContent = ev.message;
+            button.textContent = "Pulling…";
+          }
         } else if (ev.phase === "done") {
           stop();
+          card?.classList.remove("model-card--pulling-determinate");
+          if (pFill) pFill.style.width = "100%";
           button.textContent = "Activating…";
           try {
             await selectModel(model.key);
@@ -195,12 +257,14 @@ export function ModelPicker(): HTMLElement {
           await refresh();
         } else if (ev.phase === "failed") {
           stop();
+          card?.classList.remove("model-card--pulling-determinate");
           toast(`Pull failed: ${ev.error ?? "unknown error"}`, "error", 6000);
           button.disabled = false;
           button.textContent = "Pull & activate";
         }
       });
     } catch (err) {
+      card?.classList.remove("model-card--pulling-determinate");
       toast((err as Error).message, "error", 6000);
       button.disabled = false;
       button.textContent = "Pull & activate";

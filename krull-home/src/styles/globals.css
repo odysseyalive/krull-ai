@@ -284,6 +284,102 @@ button {
   .krull-update__label { display: none; }
 }
 
+/* ---------- Hardware status pill ----------
+ * Tells the user at a glance whether inference will run on GPU or CPU,
+ * and how much memory is left to play with. Lives in the top nav,
+ * left of the Update button. The leading element is a tiny SVG gauge
+ * that fills as memory gets used; the ring color shifts amber → coral
+ * → red as the free fraction drops. Visual aesthetic matches the rest
+ * of the dark cartographer / library theme: parchment gold on deep
+ * navy, mono labels, refined hairline borders. */
+.hardware-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.85rem 0.35rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: rgba(11, 14, 20, 0.55);
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: default;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+  user-select: none;
+}
+.hardware-pill:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: rgba(212, 165, 116, 0.06);
+}
+
+.hardware-pill__gauge-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.hardware-pill__gauge {
+  display: block;
+  filter: drop-shadow(0 0 6px rgba(212, 165, 116, 0.18));
+}
+
+.hardware-pill__label {
+  font-weight: 600;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.hardware-pill__detail {
+  font-size: 0.74rem;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* CPU variant — steel blue accent so the GPU/CPU distinction is
+ * instantly readable from a glance, not just a label change. */
+.hardware-pill--cpu .hardware-pill__label {
+  color: var(--accent-2);
+}
+.hardware-pill--cpu .hardware-pill__gauge {
+  filter: drop-shadow(0 0 6px rgba(111, 179, 210, 0.22));
+}
+.hardware-pill--cpu:hover {
+  border-color: var(--accent-2);
+  background: rgba(111, 179, 210, 0.06);
+}
+
+/* Detection-failed variant — recede the whole pill so it doesn't
+ * shout when there's nothing useful to say. */
+.hardware-pill--err {
+  color: var(--ink-faint);
+  border-color: var(--border);
+  background: transparent;
+}
+.hardware-pill--err .hardware-pill__label {
+  color: var(--ink-faint);
+}
+.hardware-pill--err .hardware-pill__gauge {
+  filter: none;
+  opacity: 0.4;
+}
+
+/* Mobile: keep the gauge + label, drop the GB-free detail to save room. */
+@media (max-width: 720px) {
+  .hardware-pill { padding-left: 0.5rem; padding-right: 0.65rem; }
+  .hardware-pill__detail { display: none; }
+}
+
 /* ---------- Update modal ---------- */
 .krull-update-overlay {
   position: fixed;
@@ -1281,6 +1377,331 @@ button {
 
 /* Per-component placement tweaks */
 .model-card__progress { margin: 0.5rem 0 0; }
+
+/* Remove button on installed-but-not-active brain cards. Lives in the
+ * card footer alongside "Set as active". The armed state turns the
+ * ghost button red so the second click is visibly the destructive one. */
+.model-card__remove { margin-left: 0.4rem; }
+.model-card__remove--armed {
+  color: var(--err, #c46060);
+  border-color: var(--err, #c46060);
+  background: rgba(196, 96, 96, 0.08);
+}
+
+/* Determinate variant — when ollama gives us real per-byte progress events
+ * we switch off the indeterminate stripe and render an honest percentage
+ * fill instead. The .model-card--pulling rule above still controls the
+ * progress strip's visibility; this override only kills the slide animation
+ * and lets the inline width set by the JS take over. */
+.model-card--pulling-determinate .krull-progress__fill {
+  background: linear-gradient(90deg, var(--accent-2) 0%, var(--accent) 100%);
+  background-size: auto;
+  animation: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Per-brain context suggestion
+ *
+ * An editorial marginal note pinned under OLLAMA_NUM_CTX and
+ * CONTEXT_COMPACT_LIMIT in the env editor. The active brain's
+ * recommended value is the focal point — large parchment-gold mono
+ * numeral — wrapped by a tracked-out eyebrow above and a serif italic
+ * rationale below. The card isn't a generic alert pill: it's meant to
+ * read like a cartographer's note in the margin of the env form, with
+ * the Apply control as a deliberate CTA rather than an afterthought.
+ *
+ * Two variants:
+ *   .env-field__suggestion           — full primary form for OLLAMA_NUM_CTX
+ *   .env-field__suggestion--compact  — derived form for CONTEXT_COMPACT_LIMIT
+ * ───────────────────────────────────────────────────────────────────────── */
+.env-field__suggestion {
+  margin: 0.85rem 0 0;
+  padding: 1.1rem 1.35rem 1.15rem;
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgba(212, 165, 116, 0.08), transparent 55%),
+    var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-items: end;
+  column-gap: 1.6rem;
+  row-gap: 0.55rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.env-field__suggestion::before {
+  /* Faint cartographic crosshair in the top-right corner — same trick
+   * the model picker subtitle uses, just dialed back. */
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  right: 0.85rem;
+  width: 14px;
+  height: 14px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) center / 100% 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) center / 1px 100% no-repeat;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.env-field__suggestion-eyebrow {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: #8893a5;
+  margin: 0 0 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.env-field__suggestion-eyebrow::before {
+  content: "";
+  display: inline-block;
+  width: 2rem;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+.env-field__suggestion-eyebrow-brain {
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+.env-field__suggestion-figure {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+}
+.env-field__suggestion-number {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(2rem, 3.6vw, 2.65rem);
+  color: var(--accent);
+  letter-spacing: -0.01em;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+.env-field__suggestion-unit {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.35rem;
+  color: var(--accent-soft);
+  letter-spacing: 0.005em;
+}
+
+.env-field__suggestion-meta {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.env-field__suggestion-meta-line {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  letter-spacing: 0.015em;
+  color: #a5b0c2;
+  margin: 0;
+}
+.env-field__suggestion-meta-line strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.env-field__suggestion-apply {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: end;
+  margin: 0;
+  padding: 0.7rem 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease,
+    box-shadow 160ms ease;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px -6px rgba(212, 165, 116, 0.55);
+}
+.env-field__suggestion-apply::after {
+  content: " →";
+  margin-left: 0.15rem;
+  letter-spacing: 0;
+  display: inline-block;
+  transition: transform 200ms ease;
+}
+.env-field__suggestion-apply:hover {
+  background: #e3b582;
+  border-color: #e3b582;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px -6px rgba(212, 165, 116, 0.7);
+}
+.env-field__suggestion-apply:hover::after {
+  transform: translateX(2px);
+}
+.env-field__suggestion-apply:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px -4px rgba(212, 165, 116, 0.5);
+}
+.env-field__suggestion-apply:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Applied state — value in the input matches the suggestion. Switches
+ * from gold "Apply →" to a green-shadow "Applied ✓" so the success state
+ * is unambiguous and visually distinct from the call-to-action. Editing
+ * the input reverts back to the gold form. */
+.env-field__suggestion-apply--applied {
+  background: rgba(111, 191, 115, 0.08);
+  color: var(--ok);
+  border-color: var(--ok);
+  box-shadow:
+    inset 0 0 0 1px rgba(111, 191, 115, 0.35),
+    0 6px 18px -8px rgba(111, 191, 115, 0.55);
+  cursor: default;
+}
+.env-field__suggestion-apply--applied::after {
+  content: " ✓";
+  margin-left: 0.3rem;
+  font-size: 0.95em;
+}
+.env-field__suggestion-apply--applied:hover {
+  background: rgba(111, 191, 115, 0.13);
+  color: var(--ok);
+  border-color: var(--ok);
+  transform: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(111, 191, 115, 0.5),
+    0 8px 22px -8px rgba(111, 191, 115, 0.65);
+}
+.env-field__suggestion-apply--applied:hover::after {
+  transform: none;
+}
+.env-field__suggestion-apply--applied:focus-visible {
+  outline-color: var(--ok);
+}
+
+/* Snap-in micro-animation: when the button transitions Apply→Applied,
+ * scale-pulse once to confirm the click was registered. Triggered by
+ * adding the --just-applied class which auto-removes after the keyframe
+ * completes (handled in JS via animationend). */
+.env-field__suggestion-apply--just-applied {
+  animation: suggestion-apply-snap 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes suggestion-apply-snap {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* Input pulse — briefly outlines the matching field in gold so the user
+ * sees exactly which value was just written. Fades back to the resting
+ * border state in ~700 ms. JS adds the class on apply, removes it on
+ * animationend so re-clicks always re-trigger. */
+.env-field__input--pulse {
+  animation: env-field-pulse 700ms ease-out;
+}
+@keyframes env-field-pulse {
+  0% {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 0 rgba(212, 165, 116, 0.55),
+      inset 0 0 0 1px rgba(212, 165, 116, 0.3);
+    background-color: rgba(212, 165, 116, 0.06);
+  }
+  60% {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 6px rgba(212, 165, 116, 0),
+      inset 0 0 0 1px rgba(212, 165, 116, 0.15);
+  }
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 0 0 0 rgba(212, 165, 116, 0);
+    background-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .env-field__suggestion-apply--just-applied { animation: none; }
+  .env-field__input--pulse { animation: none; }
+}
+
+.env-field__suggestion-why {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin: 0.85rem 0 0;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: #b5bdcc;
+  max-width: 68ch;
+}
+.env-field__suggestion-why::first-letter {
+  /* Subtle drop-emphasis on the rationale's first letter. */
+  font-size: 1.2em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Compact variant for CONTEXT_COMPACT_LIMIT — same visual language,
+ * single row, no rationale (it lives on the OLLAMA_NUM_CTX card). */
+.env-field__suggestion--compact {
+  padding: 0.85rem 1.2rem 0.9rem;
+  grid-template-rows: auto auto;
+  row-gap: 0.4rem;
+}
+.env-field__suggestion--compact .env-field__suggestion-number {
+  font-size: clamp(1.55rem, 2.6vw, 1.95rem);
+}
+.env-field__suggestion--compact .env-field__suggestion-why {
+  display: none;
+}
+
+/* Mobile reflow — number stacks above meta + apply, eyebrow stays on top. */
+@media (max-width: 720px) {
+  .env-field__suggestion {
+    grid-template-columns: 1fr;
+    row-gap: 0.7rem;
+  }
+  .env-field__suggestion-figure,
+  .env-field__suggestion-meta,
+  .env-field__suggestion-apply {
+    grid-column: 1;
+  }
+  .env-field__suggestion-figure { grid-row: 2; }
+  .env-field__suggestion-meta   { grid-row: 3; }
+  .env-field__suggestion-apply  { grid-row: 4; justify-self: start; }
+  .env-field__suggestion-why    { grid-row: 5; }
+}
 
 /* ---------- Library: cross-tab banner + error log panel ---------- */
 .library-banner {
