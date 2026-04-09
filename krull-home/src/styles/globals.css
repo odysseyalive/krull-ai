@@ -1068,13 +1068,9 @@ button {
   border-radius: var(--radius-lg);
   padding: 1.25rem 1.35rem;
   display: grid;
-  /* Pin the implicit column to the card's inner width. Without this,
-   * a grid item's default min-width:auto lets the implicit column
-   * expand to the widest child's min-content — any unbreakable run
-   * in a description (e.g. "Christianity/Islam/Judaism/Hinduism/Buddhism,"
-   * — slashes are not soft-break points) blows children past the
-   * card's border-box while the border-box stays clamped by the
-   * outer grid track. */
+  /* minmax(0, 1fr) + min-width:0 clamp the implicit column to the
+   * card's inner width; .bundle-card__desc handles the actual text
+   * breaking via overflow-wrap. */
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 0.65rem;
@@ -1089,6 +1085,11 @@ button {
   font-size: 0.85rem;
   color: var(--ink-dim);
   margin: 0;
+  /* Force breaks inside unbreakable runs like
+   * "Christianity/Islam/Judaism/Hinduism/Buddhism" — slashes are not
+   * CSS soft-break points. `anywhere` (unlike `break-word`) contributes
+   * to min-content sizing so the grid track calc stays correct. */
+  overflow-wrap: anywhere;
 }
 .bundle-card__meta {
   display: flex;

@@ -167,7 +167,7 @@ CATALOG=(
     "gutenberg-fiction|gutenberg/gutenberg_en_lcc-pz_2026-03.zim|Gutenberg — Fiction & Juvenile|20 GB"
     "gutenberg-literature|gutenberg/gutenberg_en_lcc-ps_2026-03.zim|Gutenberg — American Literature|14 GB"
     "gutenberg-british-lit|gutenberg/gutenberg_en_lcc-pr_2026-03.zim|Gutenberg — English Literature|20 GB"
-    "gutenberg-history|gutenberg/gutenberg_en_lcc-d_2026-03.zim|Gutenberg — World History|37 GB"
+    "gutenberg-history|gutenberg/gutenberg_en_lcc-d_2025-12.zim|Gutenberg — World History|37 GB"
     "gutenberg-us-history|gutenberg/gutenberg_en_lcc-e_2026-03.zim|Gutenberg — US History|10 GB"
     "gutenberg-science|gutenberg/gutenberg_en_lcc-q_2026-03.zim|Gutenberg — Science|12 GB"
     # (LoC class B bundles philosophy, psychology and religion together.

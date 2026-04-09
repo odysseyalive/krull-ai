@@ -639,6 +639,115 @@ download_aeronautical() {
     echo "To update when a new edition releases, set FAA_EDITION and re-run."
 }
 
+# Download base tiles + global terrain + auto-detected overlapping NOAA
+# nautical charts and FAA VFR aeronautical charts for a region. Used by
+# both the --all flag and the default (no-flag) invocation. Previously
+# the logic was duplicated inline in both `case` arms, and both copies
+# used `local` declarations — which bash only allows inside a function,
+# causing every `--all` run to crash with:
+#   "local: can only be used in a function"
+# after the base tiles finished downloading. Extracted here so `local`
+# is valid and so the two call sites share a single implementation.
+download_all_for_region() {
+    local region="$1"
+    download_base_tiles "$region"
+    echo ""
+    echo "---"
+    echo ""
+    download_terrain "global"
+    echo ""
+    echo "---"
+    echo ""
+    # Auto-detect overlapping NOAA nautical sections for this region's bbox
+    local REGION_BBOX=""
+    local entry key desc size bbox
+    for entry in "${CATALOG[@]}"; do
+        IFS='|' read -r key desc size bbox <<< "$entry"
+        if [ "$key" = "$region" ]; then
+            REGION_BBOX="$bbox"
+            break
+        fi
+    done
+    if [ -n "$REGION_BBOX" ]; then
+        local matching_sections=""
+        local rW rS rE rN
+        IFS=',' read -r rW rS rE rN <<< "$REGION_BBOX"
+        local id size_mb sW sS sE sN
+        for entry in "${NCDS_SECTIONS[@]}"; do
+            IFS='|' read -r id desc size_mb bbox <<< "$entry"
+            IFS=',' read -r sW sS sE sN <<< "$bbox"
+            # Check bounding box overlap using awk for float comparison
+            if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
+                if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
+            }'; then
+                matching_sections="$matching_sections $id"
+            fi
+        done
+        if [ -n "$matching_sections" ]; then
+            echo "Auto-detected NOAA nautical chart sections overlapping $region:"
+            echo " $matching_sections"
+            echo ""
+            # Download each matching section directly
+            mkdir -p "$TILES_DIR"
+            local section section_size_mb DEST URL
+            for section in $matching_sections; do
+                section_size_mb=""
+                for entry in "${NCDS_SECTIONS[@]}"; do
+                    IFS='|' read -r id desc size_mb bbox <<< "$entry"
+                    if [ "$id" = "$section" ]; then
+                        section_size_mb="$size_mb"
+                        break
+                    fi
+                done
+                DEST="$TILES_DIR/nautical-${section}.mbtiles"
+                if [ -f "$DEST" ]; then
+                    echo "  ✓ $section already downloaded"
+                    continue
+                fi
+                echo "  Downloading $section (~${section_size_mb} MB)..."
+                URL="${NCDS_BASE_URL}/${section}.mbtiles"
+                dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
+                if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
+                    mv "$DEST.tmp" "$DEST"
+                    echo "  ✓ $section complete"
+                else
+                    rm -f "$DEST.tmp"
+                    echo "  ✗ Failed to download $section"
+                fi
+            done
+        else
+            echo "No NOAA nautical charts available for this region (inland area)."
+        fi
+
+        echo ""
+        echo "---"
+        echo ""
+
+        # Auto-detect overlapping FAA VFR sectional charts
+        local matching_charts=""
+        local name achart
+        for entry in "${FAA_SECTIONS[@]}"; do
+            IFS='|' read -r name desc size_mb bbox <<< "$entry"
+            IFS=',' read -r sW sS sE sN <<< "$bbox"
+            if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
+                if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
+            }'; then
+                matching_charts="$matching_charts $name"
+            fi
+        done
+        if [ -n "$matching_charts" ]; then
+            echo "Auto-detected FAA VFR charts overlapping $region:"
+            echo " $matching_charts"
+            echo ""
+            for achart in $matching_charts; do
+                download_aeronautical "$achart"
+            done
+        fi
+    fi
+    echo ""
+    restart_tileserver
+}
+
 cmd_list() {
     echo "Base map regions:"
     echo ""
@@ -836,186 +945,10 @@ case "$1" in
             echo "Usage: $0 --all <region>"
             exit 1
         fi
-        download_base_tiles "$2"
-        echo ""
-        echo "---"
-        echo ""
-        download_terrain "global"
-        echo ""
-        echo "---"
-        echo ""
-        # Auto-detect overlapping NOAA nautical sections for this region's bbox
-        local REGION_BBOX=""
-        for entry in "${CATALOG[@]}"; do
-            IFS='|' read -r key desc size bbox <<< "$entry"
-            if [ "$key" = "$2" ]; then
-                REGION_BBOX="$bbox"
-                break
-            fi
-        done
-        if [ -n "$REGION_BBOX" ]; then
-            local matching_sections=""
-            IFS=',' read -r rW rS rE rN <<< "$REGION_BBOX"
-            for entry in "${NCDS_SECTIONS[@]}"; do
-                IFS='|' read -r id desc size_mb bbox <<< "$entry"
-                IFS=',' read -r sW sS sE sN <<< "$bbox"
-                # Check bounding box overlap using awk for float comparison
-                if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
-                    if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
-                }'; then
-                    matching_sections="$matching_sections $id"
-                fi
-            done
-            if [ -n "$matching_sections" ]; then
-                echo "Auto-detected NOAA nautical chart sections overlapping $2:"
-                echo " $matching_sections"
-                echo ""
-                # Download each matching section directly
-                mkdir -p "$TILES_DIR"
-                for section in $matching_sections; do
-                    local section_size_mb=""
-                    for entry in "${NCDS_SECTIONS[@]}"; do
-                        IFS='|' read -r id desc size_mb bbox <<< "$entry"
-                        if [ "$id" = "$section" ]; then
-                            section_size_mb="$size_mb"
-                            break
-                        fi
-                    done
-                    local DEST="$TILES_DIR/nautical-${section}.mbtiles"
-                    if [ -f "$DEST" ]; then
-                        echo "  ✓ $section already downloaded"
-                        continue
-                    fi
-                    echo "  Downloading $section (~${section_size_mb} MB)..."
-                    local URL="${NCDS_BASE_URL}/${section}.mbtiles"
-                    dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
-                    if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
-                        mv "$DEST.tmp" "$DEST"
-                        echo "  ✓ $section complete"
-                    else
-                        rm -f "$DEST.tmp"
-                        echo "  ✗ Failed to download $section"
-                    fi
-                done
-            else
-                echo "No NOAA nautical charts available for this region (inland area)."
-            fi
-
-            echo ""
-            echo "---"
-            echo ""
-
-            # Auto-detect overlapping FAA VFR sectional charts
-            local matching_charts=""
-            for entry in "${FAA_SECTIONS[@]}"; do
-                IFS='|' read -r name desc size_mb bbox <<< "$entry"
-                IFS=',' read -r sW sS sE sN <<< "$bbox"
-                if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
-                    if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
-                }'; then
-                    matching_charts="$matching_charts $name"
-                fi
-            done
-            if [ -n "$matching_charts" ]; then
-                echo "Auto-detected FAA VFR charts overlapping $2:"
-                echo " $matching_charts"
-                echo ""
-                for achart in $matching_charts; do
-                    download_aeronautical "$achart"
-                done
-            fi
-        fi
-        echo ""
-        restart_tileserver
+        download_all_for_region "$2"
         ;;
     *)
         # Default: download everything for the region (same as --all)
-        download_base_tiles "$1"
-        echo ""
-        echo "---"
-        echo ""
-        download_terrain "global"
-        echo ""
-        echo "---"
-        echo ""
-        # Auto-detect overlapping NOAA nautical sections
-        local REGION_BBOX=""
-        for entry in "${CATALOG[@]}"; do
-            IFS='|' read -r key desc size bbox <<< "$entry"
-            if [ "$key" = "$1" ]; then
-                REGION_BBOX="$bbox"
-                break
-            fi
-        done
-        if [ -n "$REGION_BBOX" ]; then
-            local matching_sections=""
-            IFS=',' read -r rW rS rE rN <<< "$REGION_BBOX"
-            for entry in "${NCDS_SECTIONS[@]}"; do
-                IFS='|' read -r id desc size_mb bbox <<< "$entry"
-                IFS=',' read -r sW sS sE sN <<< "$bbox"
-                if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
-                    if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
-                }'; then
-                    matching_sections="$matching_sections $id"
-                fi
-            done
-            if [ -n "$matching_sections" ]; then
-                echo "Auto-detected NOAA nautical charts overlapping $1:"
-                echo " $matching_sections"
-                echo ""
-                mkdir -p "$TILES_DIR"
-                for section in $matching_sections; do
-                    local section_size_mb=""
-                    for entry in "${NCDS_SECTIONS[@]}"; do
-                        IFS='|' read -r id desc size_mb bbox <<< "$entry"
-                        if [ "$id" = "$section" ]; then
-                            section_size_mb="$size_mb"
-                            break
-                        fi
-                    done
-                    local DEST="$TILES_DIR/nautical-${section}.mbtiles"
-                    if [ -f "$DEST" ]; then
-                        echo "  ✓ $section already downloaded"
-                        continue
-                    fi
-                    echo "  Downloading $section (~${section_size_mb} MB)..."
-                    local URL="${NCDS_BASE_URL}/${section}.mbtiles"
-                    dl_state_add "$DEST" "$((section_size_mb * 1024 * 1024))"
-                    if dl_run_curl "$DEST.tmp" "$URL" --progress-bar; then
-                        mv "$DEST.tmp" "$DEST"
-                        echo "  ✓ $section complete"
-                    else
-                        rm -f "$DEST.tmp"
-                        echo "  ✗ Failed to download $section"
-                    fi
-                done
-            fi
-
-            echo ""
-            echo "---"
-            echo ""
-
-            # Auto-detect overlapping FAA VFR charts
-            local matching_charts=""
-            for entry in "${FAA_SECTIONS[@]}"; do
-                IFS='|' read -r name desc size_mb bbox <<< "$entry"
-                IFS=',' read -r sW sS sE sN <<< "$bbox"
-                if echo "$rW $rE $sW $sE $rS $rN $sS $sN" | awk '{
-                    if ($1 < $4 && $2 > $3 && $5 < $8 && $6 > $7) exit 0; else exit 1
-                }'; then
-                    matching_charts="$matching_charts $name"
-                fi
-            done
-            if [ -n "$matching_charts" ]; then
-                echo "Auto-detected FAA VFR charts overlapping $1:"
-                echo " $matching_charts"
-                echo ""
-                for achart in $matching_charts; do
-                    download_aeronautical "$achart"
-                done
-            fi
-        fi
-        echo ""
-        restart_tileserver
+        download_all_for_region "$1"
         ;;
 esac
