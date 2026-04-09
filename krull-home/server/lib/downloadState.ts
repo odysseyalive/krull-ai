@@ -140,6 +140,34 @@ export async function readState(): Promise<DownloadState> {
 }
 
 /**
+ * Parse the `content-length=` field out of a `<file>.meta` sidecar.
+ * The sidecars are written by scripts/lib/download-log.sh whenever it
+ * HEAD-probes an upstream URL, and capture the server's authoritative
+ * Content-Length. We prefer that number over the catalog estimate
+ * because the catalog strings (e.g. "~80 GB") are hand-maintained and
+ * drift as upstream files grow. A stale estimate makes the progress
+ * bar stick at 99% while the actual download keeps running, which is
+ * the bug this code path is here to avoid.
+ *
+ * Returns a positive integer or null. Never throws.
+ */
+async function readMetaContentLength(filePath: string): Promise<number | null> {
+  try {
+    const text = await fs.readFile(filePath + ".meta", "utf8");
+    for (const line of text.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      if (line.slice(0, eq).trim() !== "content-length") continue;
+      const n = parseInt(line.slice(eq + 1).trim(), 10);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    }
+  } catch {
+    // No sidecar yet, or unreadable — fall back to the catalog estimate.
+  }
+  return null;
+}
+
+/**
  * Read the state and augment the active entry with computed progress
  * by stat-ing each manifest file. This is what the HTTP endpoint
  * returns on each poll.
@@ -152,7 +180,12 @@ export async function readStateWithProgress(): Promise<DownloadStateWithProgress
   let bytes = 0;
   let total = 0;
   for (const entry of state.active.manifest) {
-    total += entry.expectedBytes || 0;
+    // Prefer the captured Content-Length from the .meta sidecar over
+    // the catalog estimate. The sidecar is the upstream's own answer
+    // to "how big is this file"; the catalog string is a hand-typed
+    // approximation that goes stale when upstream files grow.
+    const metaLength = await readMetaContentLength(entry.path);
+    total += metaLength ?? entry.expectedBytes ?? 0;
     try {
       const st = await fs.stat(entry.path);
       bytes += st.size;

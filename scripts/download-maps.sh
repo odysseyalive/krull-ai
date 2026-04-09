@@ -31,7 +31,7 @@ CATALOG=(
     "us-west|US West|~800 MB|-124.85,32.53,-102.05,49.00"
     "us|United States|~3 GB|-125.0,24.5,-66.9,49.4"
     "europe|Europe|~5 GB|-31.0,34.0,40.0,72.0"
-    "planet|Entire Planet|~80 GB|"
+    "planet|Entire Planet|~120 GB|"
 )
 
 # NOAA NCDS nautical chart sections: id|description|size_mb|bbox (west,south,east,north)

@@ -202,13 +202,22 @@ _dl_probe_and_reconcile() {
     local out="$1" url="$2"
     local meta="$out.meta"
 
-    # Nothing to reconcile if there's no partial on disk.
-    [ -s "$out" ] || { rm -f "$meta"; return 0; }
-
     local blob
     blob=$(curl -sIL --max-time 15 "$url" 2>/dev/null || true)
     if [ -z "$blob" ]; then
         # Probe failed — don't touch the file, let curl -C - decide.
+        return 0
+    fi
+
+    # No partial yet (fresh download). Drop any stale sidecar from a
+    # previous aborted attempt and seed a new one with the current
+    # remote Content-Length / ETag / Last-Modified so the krull-home
+    # progress endpoint can read the authoritative total from byte
+    # zero, instead of relying on the catalog estimate string for the
+    # entire first run.
+    if [ ! -s "$out" ]; then
+        rm -f "$meta"
+        _dl_save_meta "$meta" "$url" "$blob"
         return 0
     fi
 
