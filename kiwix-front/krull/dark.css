@@ -84,19 +84,16 @@ html.krull-dark .fadeOut {
   background: linear-gradient(rgba(11, 14, 20, 0) 0%, rgb(11, 14, 20) 100%) !important;
 }
 
-/* Top-right raster icons on the library page (language selector and
- * OPDS feed) ship as brightly-coloured PNGs which clash with the dark
- * theme. Greyscale + warm tint to match the parchment-gold accent. */
+/* Top-right library-page icons (language selector, OPDS feed) ship as
+ * SVGs with a baked-in white rounded-square background. We want the
+ * icon glyphs to keep their original colours but the white backdrop
+ * has to go. invert(1) hue-rotate(180deg) flips lightness while
+ * preserving hue: white→black, black→white, saturated colours stay
+ * roughly on-hue. Then a -10% brightness takes the edge off. */
 html.krull-dark #uiLanguageSelectorButton,
 html.krull-dark #feedLogo,
 html.krull-dark img.feedLogo {
-  filter: grayscale(1) brightness(1.3) sepia(0.3) hue-rotate(-10deg);
-  opacity: 0.85;
-}
-html.krull-dark #uiLanguageSelectorButton:hover,
-html.krull-dark #feedLogo:hover,
-html.krull-dark img.feedLogo:hover {
-  opacity: 1;
+  filter: invert(1) hue-rotate(180deg) brightness(0.9);
 }
 
 /* Book/result tiles */
