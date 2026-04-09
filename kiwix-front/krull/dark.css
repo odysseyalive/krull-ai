@@ -271,9 +271,22 @@ html.krull-dark tr.odd,
 html.krull-dark tr.even {
   background-color: transparent !important;
 }
+/* Gutenberg's skin ships with a row :hover rule at
+ *   table.dataTable.display tbody tr.odd:hover
+ * (specificity 0-0-4-3) that paints the hovered book row whitesmoke.
+ * Our generic html.krull-dark tr.odd:hover (0-0-3-2) loses to it even
+ * with !important. Match the DataTables selector path explicitly so
+ * specificity is in our favour (0-0-5-4). */
+html.krull-dark table.dataTable tbody tr:hover,
+html.krull-dark table.dataTable tbody tr.odd:hover,
+html.krull-dark table.dataTable tbody tr.even:hover,
+html.krull-dark table.dataTable.display tbody tr:hover,
+html.krull-dark table.dataTable.display tbody tr.odd:hover,
+html.krull-dark table.dataTable.display tbody tr.even:hover,
 html.krull-dark tr.odd:hover,
 html.krull-dark tr.even:hover {
   background-color: #161b25 !important;
+  color: #e6edf3 !important;
 }
 /* DataTables pagination current-page pill */
 html.krull-dark .paginate_button.current {
