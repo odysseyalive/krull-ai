@@ -333,6 +333,38 @@ html.krull-dark .spinner {
   background-color: #0b0e14 !important;
   color: #e6edf3 !important;
 }
+/* Gutenberg book cover/info page (`*_cover.NNN`).
+ * The bibrec metadata card ships a hard-coded white background from
+ * style.css. Children (`.cover-detail`, `.label`, `.label-value`,
+ * `.icons-footer`) are already transparent and inherit the dark
+ * palette, so a single rule on the wrapper is enough to dark the
+ * Author/Language/License/Popularity panel and the EPUB/HTML download
+ * icons that sit at its bottom. */
+html.krull-dark .bibrec,
+html.krull-dark .bibrec.sidedimg {
+  background-color: #0f141c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+/* Field-label text inside the bibrec card — make the labels readable
+ * but slightly muted against the value text. */
+html.krull-dark .bibrec .cover-detail .label {
+  color: #9aa5b1 !important;
+}
+/* Row dividers between Author/Language/License/Popularity rows. */
+html.krull-dark .bibrec .cover-detail {
+  border-color: #1f2733 !important;
+}
+/* Gutenberg "transcriber's note" callout box at the end of most
+ * books — ships with a hard-coded #eeeeee background and a thin
+ * border that the dark cascade leaves white-on-light otherwise. */
+html.krull-dark .transnote,
+html.krull-dark .tnote {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
 
 /* --- MediaWiki outer containers (Wikipedia/Wikivoyage/Wiktionary/
  *     Appropedia/energypedia) ------------------------------------------

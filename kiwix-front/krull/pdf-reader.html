@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" class="krull-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Krull PDF Reader</title>
+  <link rel="stylesheet" href="/krull/dark.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0b0e14;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   Roboto, Oxygen, Ubuntu, sans-serif;
+    }
+    #toolbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: #11151c;
+      border-bottom: 1px solid #1f2733;
+      z-index: 10;
+      font-size: 14px;
+    }
+    #toolbar .title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #e6edf3;
+    }
+    #toolbar a.close {
+      color: #9aa5b1;
+      text-decoration: none;
+      padding: 4px 10px;
+    }
+    #toolbar a.close:hover { color: #d4a574; }
+    #toolbar #pageinfo {
+      color: #9aa5b1;
+      font-variant-numeric: tabular-nums;
+    }
+    #pages {
+      position: absolute;
+      top: 44px; left: 0; right: 0; bottom: 0;
+      overflow: auto;
+      padding: 24px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      background: #0b0e14;
+    }
+    #pages canvas {
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+      max-width: 100%;
+      height: auto;
+      /* pdf.js renders the page background as the PDF's own bg
+         (white for most). Invert via filter so it matches dark mode
+         while preserving image colors with hue-rotate. */
+      filter: invert(0.92) hue-rotate(180deg);
+    }
+    #status {
+      color: #9aa5b1;
+      font-size: 14px;
+      padding: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <a class="close" href="javascript:history.length>1?history.back():window.location.href='/'">&larr; Back</a>
+    <span class="title" id="doc-title">Loading…</span>
+    <span id="pageinfo"></span>
+  </div>
+  <div id="pages">
+    <div id="status">Loading PDF…</div>
+  </div>
+
+  <script type="module">
+    import * as pdfjsLib from "/krull/vendor/pdf.min.js";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/krull/vendor/pdf.worker.min.js";
+
+    var params = new URLSearchParams(window.location.search);
+    var src = params.get("src");
+    var status = document.getElementById("status");
+    var pages = document.getElementById("pages");
+    var pageinfo = document.getElementById("pageinfo");
+
+    if (!src) {
+      status.textContent = "No ?src= parameter.";
+    } else {
+      try {
+        const loadingTask = pdfjsLib.getDocument(src);
+        const pdf = await loadingTask.promise;
+        document.getElementById("doc-title").textContent =
+          decodeURIComponent(src.split("/").pop());
+        pageinfo.textContent = pdf.numPages + " page" + (pdf.numPages === 1 ? "" : "s");
+        pages.removeChild(status);
+
+        // Match the available width minus the gutter padding so pages
+        // fill the column without horizontal scroll on most viewports.
+        const containerWidth = pages.clientWidth - 48;
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const baseViewport = page.getViewport({ scale: 1 });
+          const scale = Math.min(2, containerWidth / baseViewport.width);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          pages.appendChild(canvas);
+          await page.render({
+            canvasContext: canvas.getContext("2d"),
+            viewport,
+          }).promise;
+        }
+      } catch (err) {
+        status.textContent = "Failed to load PDF: " + err.message;
+        console.error("[krull pdf-reader]", err);
+      }
+    }
+  </script>
+</body>
+</html>

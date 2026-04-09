@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en" class="krull-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Krull EPUB Reader</title>
+  <link rel="stylesheet" href="/krull/dark.css">
+  <style>
+    /* Self-contained dark theme — does not depend on the iframe-side
+       sub_filter dark.css link working, but loads it anyway for
+       parity with the rest of the library. */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0b0e14;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   Roboto, Oxygen, Ubuntu, sans-serif;
+      overflow: hidden;
+    }
+    #toolbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: #11151c;
+      border-bottom: 1px solid #1f2733;
+      z-index: 10;
+      font-size: 14px;
+    }
+    #toolbar .title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #e6edf3;
+    }
+    #toolbar button {
+      background: #1c2230;
+      color: #d4a574;
+      border: 1px solid #1f2733;
+      border-radius: 4px;
+      padding: 4px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    #toolbar button:hover {
+      background: #242b3a;
+    }
+    #toolbar a.close {
+      color: #9aa5b1;
+      text-decoration: none;
+      padding: 4px 10px;
+    }
+    #toolbar a.close:hover {
+      color: #d4a574;
+    }
+    #viewer {
+      position: fixed;
+      top: 44px; left: 0; right: 0; bottom: 0;
+      background: #0b0e14;
+    }
+    #status {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #9aa5b1;
+      font-size: 14px;
+    }
+    /* The pager arrows from epub.js render as overlay click areas. */
+    .arrow {
+      position: fixed;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(28, 34, 48, 0.6);
+      color: #d4a574;
+      border: 1px solid #1f2733;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      font-size: 20px;
+      z-index: 5;
+    }
+    .arrow:hover { background: #1c2230; }
+    .arrow.prev { left: 12px; }
+    .arrow.next { right: 12px; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <a class="close" href="javascript:history.length>1?history.back():window.location.href='/'">&larr; Back</a>
+    <span class="title" id="book-title">Loading…</span>
+    <button id="font-down" title="Smaller text">A&minus;</button>
+    <button id="font-up" title="Larger text">A+</button>
+  </div>
+  <div id="viewer"></div>
+  <div class="arrow prev" id="prev" title="Previous page">&#x2039;</div>
+  <div class="arrow next" id="next" title="Next page">&#x203a;</div>
+  <div id="status"></div>
+
+  <script src="/krull/vendor/jszip.min.js"></script>
+  <script src="/krull/vendor/epub.min.js"></script>
+  <script>
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    var src = params.get("src");
+    var status = document.getElementById("status");
+    if (!src) {
+      status.textContent = "No ?src= parameter.";
+      return;
+    }
+
+    // epub.js requires a string URL or ArrayBuffer. Pass the absolute
+    // path so requests resolve relative to the kiwix-front origin.
+    var book = ePub(src);
+    var rendition = book.renderTo("viewer", {
+      width: "100%",
+      height: "100%",
+      flow: "paginated",
+      manager: "default",
+      spread: "auto",
+    });
+
+    // Krull dark theme — applied INSIDE the iframe epub.js renders the
+    // book content into. Reaches the contents via the themes API.
+    rendition.themes.register("krull-dark", {
+      "html, body": {
+        "background": "#0b0e14 !important",
+        "color": "#e6edf3 !important",
+      },
+      "p, div, span, li": {
+        "color": "#e6edf3 !important",
+      },
+      "h1, h2, h3, h4, h5, h6": {
+        "color": "#d4a574 !important",
+      },
+      "a, a:link, a:visited": {
+        "color": "#6fb3d2 !important",
+      },
+      "blockquote": {
+        "border-left": "3px solid #1f2733 !important",
+        "color": "#9aa5b1 !important",
+      },
+      "img": {
+        "background": "transparent !important",
+      },
+    });
+    rendition.themes.select("krull-dark");
+
+    var fontPct = 100;
+    rendition.themes.fontSize(fontPct + "%");
+
+    rendition.display().then(function () {
+      status.textContent = "";
+    }).catch(function (err) {
+      status.textContent = "Failed to load EPUB: " + err.message;
+      console.error("[krull epub-reader]", err);
+    });
+
+    book.loaded.metadata.then(function (meta) {
+      if (meta && meta.title) {
+        document.getElementById("book-title").textContent = meta.title;
+        document.title = meta.title + " — Krull";
+      }
+    });
+
+    document.getElementById("prev").addEventListener("click", function () {
+      rendition.prev();
+    });
+    document.getElementById("next").addEventListener("click", function () {
+      rendition.next();
+    });
+    document.addEventListener("keyup", function (e) {
+      if (e.key === "ArrowLeft") rendition.prev();
+      if (e.key === "ArrowRight") rendition.next();
+    });
+
+    document.getElementById("font-down").addEventListener("click", function () {
+      fontPct = Math.max(70, fontPct - 10);
+      rendition.themes.fontSize(fontPct + "%");
+    });
+    document.getElementById("font-up").addEventListener("click", function () {
+      fontPct = Math.min(200, fontPct + 10);
+      rendition.themes.fontSize(fontPct + "%");
+    });
+  })();
+  </script>
+</body>
+</html>
