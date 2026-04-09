@@ -547,37 +547,53 @@ html.krull-dark ._page .dc-description a {
   color: #6fb3d2 !important;
 }
 
-/* ---------- Theme toggle button ---------- */
-#krull-theme-toggle {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 9999;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  border: 1px solid #1f2733;
-  background: #161b25;
-  color: #d4a574;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 200ms ease, background 200ms ease, border-color 200ms ease;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+/* MariaDB version callouts — cream-yellow boxes like .product,
+ * .mariadb_from_X_Y, .mariadb.product_title — flagging "Available
+ * from MariaDB X.Y" on each feature page. The MariaDB DevDocs bundle
+ * places these at the top level of the iframe body (no ._page wrapper)
+ * so we don't scope under ._page. */
+html.krull-dark .product,
+html.krull-dark [class*="mariadb_from"],
+html.krull-dark [class*="mariadb_until"],
+html.krull-dark .product_title {
+  background-color: #11151c !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+  border-left: 4px solid #d4a574 !important;
 }
-#krull-theme-toggle:hover {
-  transform: scale(1.08);
-  border-color: #d4a574;
+
+/* .advice blocks — used by TypeScript handbook and NumPy bundles.
+ * Not ._page-scoped because NumPy's HTML places .advice at body level. */
+html.krull-dark .advice,
+html.krull-dark .advice-item {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-left: 4px solid #6fb37e !important;
 }
-html.krull-light #krull-theme-toggle {
-  background: #ffffff;
-  color: #11151c;
-  border-color: #d0d0d0;
+
+/* Node.js DevDocs — API stability indicator, metadata block, and
+ * inline type links. Stability carries severity-like meaning so keep a
+ * coloured accent (green = stable, gold = experimental / deprecated). */
+html.krull-dark .api_stability {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-left: 4px solid #6fb37e !important;
 }
-html.krull-light #krull-theme-toggle:hover {
-  border-color: #11151c;
+html.krull-dark .api_stability_0,
+html.krull-dark .api_stability_1 {
+  border-left-color: #d97060 !important;
+}
+html.krull-dark .api_stability_3 {
+  border-left-color: #d4a574 !important;
+}
+html.krull-dark .api_metadata {
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border: 1px solid #1f2733 !important;
+}
+html.krull-dark a.type {
+  background-color: #161b25 !important;
+  color: #6fb3d2 !important;
+  border-radius: 3px;
+  padding: 0 4px;
 }
