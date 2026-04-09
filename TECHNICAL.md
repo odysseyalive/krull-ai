@@ -254,6 +254,8 @@ krull-claude
 
 The `krull-claude` command is installed to `~/.local/bin/` when you run `./krull setup`. It launches Claude Code pre-configured to talk to your local stack. Requires `~/.local/bin` to be in your `$PATH`. All arguments are passed through to `claude`, so `krull-claude -p "hello"` works as expected.
 
+**Auto-accept in `--print` / `-p` mode.** When the wrapper detects `-p` or `--print` in its arguments, it injects `--permission-mode acceptEdits` so tool prompts don't deadlock the non-interactive run. This is necessary because the SSE proxy's `inject_lang_docs` filter teaches the model to query offline Kiwix devdocs via `curl http://localhost:8090/...`, and Claude Code's Bash permission gate would otherwise silently block every curl in print mode and the model would never reach the offline docs. **Interactive sessions are unaffected** — when you run `krull-claude` without `-p`, prompts still appear and you click through them as normal. To override per call, pass an explicit `--permission-mode` flag and it takes precedence.
+
 <details>
 <summary>Manual alternative (without krull-claude)</summary>
 
@@ -262,7 +264,7 @@ ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
 ANTHROPIC_BASE_URL=http://localhost:4000 \
 DISABLE_TELEMETRY=1 \
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-claude
+claude --permission-mode acceptEdits   # only needed for -p / --print
 ```
 
 </details>
@@ -322,6 +324,7 @@ Copy `.env.sample` to `.env` to customize settings, or just use the **Settings**
 | Plan execution | Works | Claude Code tracks plan steps natively |
 | Web search context | Works | Auto Web Search injects results before every response |
 | Offline knowledge | Works | Kiwix Lookup injects relevant articles |
+| Offline language docs | Works | `inject_lang_docs` detects the language in play and teaches the model to query devdocs ZIMs via Bash + curl (see below) |
 | Map/location queries | Works | Offline Map Search finds places and coordinates |
 | Context management | Works | Context Manager auto-compacts long conversations |
 | Hooks | Works | Hooks run in the Claude Code CLI, independent of the model |
@@ -410,11 +413,13 @@ They're Python functions that process every request before it reaches the model.
 |---|---|
 | **Current Date & Time** | Injects today's date and current time into every request. Local models have no sense of time otherwise. |
 | **Context Manager** | Monitors token usage and auto-compacts older messages when the conversation approaches the context limit. Keeps things alive instead of crashing. |
-| **Auto Web Search** | Queries SearXNG before every response and injects the top results with source URLs. The model cites what it finds. |
-| **Kiwix Knowledge Lookup** | Searches the offline knowledge base and injects relevant article snippets. Works without internet. |
+| **Truth Guard** | Front-loads anti-fabrication, hedge-when-uncertain, and push-back-when-the-user-is-wrong rules. Also detects terseness directives in the user message ("ONLY the answer", "no explanation", "in one word") and appends a freshness reminder so the model can't be talked out of hedging by being asked to be brief. |
+| **Auto Web Search** | Queries SearXNG before every response and injects the top results with source URLs. The model cites what it finds. (Tools-less requests only — when tools are present the model is expected to call `WebSearch` / `WebFetch` itself.) |
+| **Kiwix Knowledge Lookup** | Searches the offline knowledge base and injects relevant article snippets. Scopes per-book against the strict-eng catalog (`books.name=` per entry) so kiwix-serve's "two or more books in different languages" check doesn't trip. Tools-less requests only. |
+| **Offline Language Docs** (`inject_lang_docs`) | Tools-present companion to Kiwix Lookup, aimed at krull-claude / Claude Code traffic. Detects the programming language in play (file extensions, marker files like `Cargo.toml` / `pyproject.toml` / `go.mod`, free-text language tokens) and injects a system note teaching the model the exact `curl http://localhost:8090/search?books.name=devdocs_en_<lang>_<date>&pattern=...` shape, plus the `/content/<book>/<path>` shape for fetching specific pages. Uses Bash + curl rather than `WebFetch` because Claude Code's `WebFetch` blocks localhost / private-IP URLs. The lang→ZIM map is resolved against the live catalog at request time so date suffixes don't go stale. Toggle via `ENABLE_LANG_DOCS` (default `true`). |
 | **Offline Map Search** | Detects location queries and searches Photon for places, addresses, and coordinates. Results include links to the local tile server. |
 
-All filter settings are adjustable in Open WebUI under **Admin Panel > Functions > [filter name] > Valves**.
+All filter settings are adjustable in Open WebUI under **Admin Panel > Functions > [filter name] > Valves**. SSE-proxy filters (Truth Guard, Offline Language Docs) are toggled via the proxy's environment block in `docker-compose.yml` (`ENABLE_TRUTH_GUARD`, `ENABLE_LANG_DOCS`, `ENABLE_KIWIX`, `ENABLE_WEB_SEARCH`, `ENABLE_MAP_SEARCH`).
 
 Settings you might want to tune:
 

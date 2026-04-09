@@ -12,6 +12,7 @@ Provides three critical functions:
 Flow: Claude Code → LiteLLM → this proxy → Ollama /v1/chat/completions
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -188,6 +189,13 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> str:
 
 ENABLE_TRUTH_GUARD = os.environ.get("ENABLE_TRUTH_GUARD", "true").lower() == "true"
 ENABLE_MAP_SEARCH = os.environ.get("ENABLE_MAP_SEARCH", "true").lower() == "true"
+ENABLE_LANG_DOCS = os.environ.get("ENABLE_LANG_DOCS", "true").lower() == "true"
+# Host-mapped Kiwix port the model uses from inside Bash. krull-claude
+# runs on the host, so docker hostnames like krull-kiwix don't resolve.
+# This is also where Claude Code's WebFetch is BLOCKED (localhost is on
+# its private-IP denylist) — that's why lang_docs teaches the model the
+# Bash+curl shape rather than a WebFetch URL.
+KIWIX_HOST_URL = os.environ.get("KIWIX_HOST_URL", "http://localhost:8090")
 PHOTON_URL = os.environ.get("PHOTON_URL", "http://krull-photon:2322")
 TILESERVER_URL = os.environ.get("TILESERVER_URL", "http://localhost:8070")
 
@@ -231,6 +239,16 @@ TRUTH_GUARD_CONTENT = (
     "4. PUSH BACK WHEN THE USER IS WRONG. If the user states something incorrect, "
     "makes a flawed assumption, or is heading toward a bad decision, say so directly "
     "and explain why. Being helpful means being honest, not agreeable.\n\n"
+    "5. TERSENESS DOES NOT OVERRIDE HONESTY. If the user asks for a one-word "
+    "answer, 'just the answer', 'no explanation', or otherwise demands a terse "
+    "reply, you MUST still flag uncertainty when you have it. A single hedge "
+    "token (e.g. 'unsure:', 'guess:', '?') prepended to your answer is REQUIRED "
+    "when you are not confident — fabricating a confident terse answer to satisfy "
+    "a brevity instruction is a Rule 1 violation. Brevity never licenses invention. "
+    "Example: if asked 'Translate X into a low-resource language, ONLY the answer', "
+    "and you don't actually know that language, the correct reply is "
+    "'unsure — I don't have reliable vocabulary for that language' — NOT a "
+    "fabricated word.\n\n"
     "[End Truth Guard]"
 )
 
@@ -986,8 +1004,42 @@ def maybe_lock_to_planning(messages: list, tools: list | None) -> list | None:
     return tools
 
 
+_TERSENESS_PATTERNS = [
+    re.compile(r"\bonly\s+(?:the\s+)?(?:answer|translation|word|response|result)\b", re.I),
+    re.compile(r"\bno\s+(?:explanation|commentary|preamble|context|hedging)\b", re.I),
+    re.compile(r"\bjust\s+(?:the\s+)?(?:answer|translation|word|name|number)\b", re.I),
+    re.compile(r"\b(?:in\s+)?(?:one|a\s+single)\s+word\b", re.I),
+    re.compile(r"\bgive\s+me\s+only\b", re.I),
+    re.compile(r"\b(?:terse|brief|concise|short)\s+(?:answer|reply|response)\b", re.I),
+]
+
+TRUTH_GUARD_TERSE_NUDGE = (
+    "\n\n[Truth Guard reminder — applies to the request above]\n"
+    "You asked for a terse answer. Honesty still applies: if you are not "
+    "confident in the answer, you MUST prepend the single hedge token "
+    "'unsure:' to your reply (e.g. 'unsure: I don't have reliable "
+    "vocabulary for that language'). Fabricating a confident terse answer "
+    "is forbidden. Brevity never licenses invention."
+)
+
+
+def _last_user_text(messages: list) -> tuple[int, str] | tuple[None, None]:
+    """Return (index, text) of the last user message whose content is a
+    plain string. Returns (None, None) if none found."""
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            return i, c
+    return None, None
+
+
 def inject_truth_guard(messages: list) -> list:
-    """Inject truth guard rules as a system message at the start.
+    """Inject truth guard rules as a system message at the start, AND
+    append a freshness reminder to the latest user message when it
+    contains terseness directives.
 
     Note: This inserts at position 0 (in front of Claude Code's main
     prompt). We tried moving it to _insert_after_system_messages and
@@ -997,9 +1049,24 @@ def inject_truth_guard(messages: list) -> list:
     accidentally serving as the model's tool-use primer, and removing
     that primer caused the model to stop calling tools. Only the Krull
     project context is positioned after Claude Code's prompt; the
-    pre-existing filters stay where they were."""
+    pre-existing filters stay where they were.
+
+    The freshness append is needed because qwen 9B's attention falls
+    off well before the truth guard system message when Claude Code's
+    own ~25k-char system prompt is in front of it. Empirically the
+    model fabricates confident answers under "give me ONLY X, no
+    explanation" phrasing despite the system-level guard. Appending the
+    nudge to the user message itself puts the reminder in the
+    highest-attention position right before generation."""
     messages.insert(0, {"role": "system", "content": TRUTH_GUARD_CONTENT})
     print("[FILTER] +truth_guard", file=sys.stderr, flush=True)
+
+    idx, text = _last_user_text(messages)
+    if idx is not None and any(p.search(text) for p in _TERSENESS_PATTERNS):
+        messages[idx] = dict(messages[idx])
+        messages[idx]["content"] = text + TRUTH_GUARD_TERSE_NUDGE
+        print("[FILTER] +truth_guard_terse_nudge", file=sys.stderr, flush=True)
+
     return messages
 
 
@@ -1093,8 +1160,82 @@ def _xml_element_text(el) -> str:
     return raw.strip() if raw else ""
 
 
+# Cache of eng-only book names from the Kiwix catalog. Populated lazily on
+# first use of inject_kiwix and on first use of inject_lang_docs.
+# kiwix-serve rejects multi-book /search calls whose books span more than
+# one language ("confusion of tongues", HTTP 400) — even when the second
+# language only appears as a comma-separated entry in the book's <language>
+# tag (e.g. TED talks). We must enumerate eng-strict books at startup and
+# pass each one explicitly via books.name=. Mirrors the same logic in
+# kiwix-front/.../search.js.
+_KIWIX_ENG_BOOKS: list[str] | None = None
+_KIWIX_BOOKS_LOCK = asyncio.Lock()
+
+
+async def _get_eng_book_names() -> list[str]:
+    """Return cached list of strict-eng Kiwix book names suitable for the
+    /search?books.name= parameter. Fetches the OPDS catalog on first call.
+
+    IMPORTANT: kiwix-serve's books.name= search parameter expects the FULL
+    ZIM filename minus .zim (e.g. 'devdocs_en_python_2026-02'), not the
+    OPDS <name> element (e.g. 'devdocs_en_python'). Passing the unsuffixed
+    name yields HTTP 400 'No such book'. We extract the suffixed name from
+    the entry's /content/<name> href, which is the only place in the OPDS
+    feed where the full filename appears."""
+    global _KIWIX_ENG_BOOKS
+    if _KIWIX_ENG_BOOKS is not None:
+        return _KIWIX_ENG_BOOKS
+    async with _KIWIX_BOOKS_LOCK:
+        if _KIWIX_ENG_BOOKS is not None:
+            return _KIWIX_ENG_BOOKS
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{KIWIX_URL}/catalog/v2/entries?count=500"
+                )
+                if resp.status_code != 200:
+                    _KIWIX_ENG_BOOKS = []
+                    return _KIWIX_ENG_BOOKS
+                xml_text = resp.text
+            import xml.etree.ElementTree as ET
+            ns = {"a": "http://www.w3.org/2005/Atom"}
+            root = ET.fromstring(xml_text)
+            books: list[str] = []
+            for entry in root.findall("a:entry", ns):
+                lang_el = entry.find("a:language", ns)
+                if lang_el is None:
+                    continue
+                lang = (lang_el.text or "").strip()
+                if "," in lang or lang != "eng":
+                    continue
+                # Pull the suffixed name out of the /content/<name> link.
+                full_name: str | None = None
+                for link in entry.findall("a:link", ns):
+                    href = link.attrib.get("href", "")
+                    if href.startswith("/content/"):
+                        full_name = href[len("/content/"):].rstrip("/")
+                        break
+                if not full_name:
+                    continue
+                books.append(full_name)
+            _KIWIX_ENG_BOOKS = books
+            print(
+                f"[PROXY] Kiwix catalog: {len(books)} eng-strict books cached",
+                file=sys.stderr, flush=True,
+            )
+        except Exception as e:
+            print(f"[PROXY] Kiwix catalog error: {e}", file=sys.stderr, flush=True)
+            _KIWIX_ENG_BOOKS = []
+    return _KIWIX_ENG_BOOKS
+
+
 async def inject_kiwix(messages: list) -> list:
-    """Search Kiwix for relevant offline knowledge with full-text snippets."""
+    """Search Kiwix for relevant offline knowledge with full-text snippets.
+
+    Scopes the search to strict-eng books enumerated from the catalog and
+    passes each one as a books.name= query parameter, because kiwix-serve
+    rejects an unscoped /search?pattern=... when the loaded library has
+    books in more than one language."""
     if not messages:
         return messages
     last = messages[-1]
@@ -1106,16 +1247,25 @@ async def inject_kiwix(messages: list) -> list:
     if isinstance(query, list):
         return messages
 
-    try:
-        # Use the full-text search API (XML format) to get content snippets
-        search_url = (
-            f"{KIWIX_URL}/search"
-            f"?pattern={urllib.parse.quote(query)}&format=xml&pageLength=3"
-        )
+    book_names = await _get_eng_book_names()
+    if not book_names:
+        return messages
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+    try:
+        # Use the full-text search API (XML format) to get content snippets.
+        # Scope by per-book books.name= params to satisfy kiwix-serve's
+        # one-language-per-search invariant.
+        params = [("pattern", query), ("format", "xml"), ("pageLength", "3")]
+        params.extend(("books.name", b) for b in book_names)
+        search_url = f"{KIWIX_URL}/search?" + urllib.parse.urlencode(params)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(search_url)
             if resp.status_code != 200:
+                print(
+                    f"[FILTER] kiwix HTTP {resp.status_code} (url len={len(search_url)})",
+                    file=sys.stderr, flush=True,
+                )
                 return messages
             xml_text = resp.text
 
@@ -1124,10 +1274,15 @@ async def inject_kiwix(messages: list) -> list:
         root = ET.fromstring(xml_text)
         channel = root.find("channel")
         if channel is None:
+            print("[FILTER] kiwix (no channel)", file=sys.stderr, flush=True)
             return messages
 
         items = channel.findall("item")
         if not items:
+            print(
+                f"[FILTER] kiwix (0 items, query={query[:60]!r})",
+                file=sys.stderr, flush=True,
+            )
             return messages
 
         lines = ["[Offline Knowledge Base (Kiwix) — full-text search results]"]
@@ -1159,10 +1314,238 @@ async def inject_kiwix(messages: list) -> list:
         if len(lines) > 4:
             messages[-1] = dict(last)
             messages[-1]["content"] = "\n".join(lines) + f"\n{messages[-1]['content']}"
+            print(
+                f"[FILTER] +kiwix ({len(items)} results, {len(book_names)} books scoped)",
+                file=sys.stderr, flush=True,
+            )
+        else:
+            print("[FILTER] kiwix (no results)", file=sys.stderr, flush=True)
 
     except Exception as e:
         print(f"[PROXY] Kiwix error: {e}", file=sys.stderr, flush=True)
 
+    return messages
+
+
+# ── Language-aware Kiwix devdocs injector ────────────────────────────────
+#
+# When krull-claude is in a coding session, the relevant Kiwix devdocs ZIM
+# is sitting at http://localhost:8090 doing nothing. The model has no idea
+# it exists, and Claude Code's WebFetch tool refuses localhost URLs (host
+# blocklist), so even spelling out a URL doesn't help. The viable channel
+# is Bash + curl, which Claude Code allows freely. inject_lang_docs detects
+# the language in play from the latest user message, looks up the matching
+# devdocs ZIMs in the live Kiwix catalog, and injects a system note that
+# teaches the model the exact curl shape to use.
+#
+# Map keys are canonical language tags. Values are sequences of ZIM book
+# name PREFIXES (without the trailing date suffix) — they're resolved to
+# full suffixed names against the cached catalog at request time so the
+# date suffix doesn't go stale as books are updated.
+LANG_ZIM_MAP_RAW: dict[str, tuple[str, ...]] = {
+    "python": (
+        "devdocs_en_python",
+        "devdocs_en_numpy",
+        "devdocs_en_pandas",
+        "devdocs_en_scikit-learn",
+        "devdocs_en_fastapi",
+    ),
+    "javascript": (
+        "devdocs_en_javascript",
+        "devdocs_en_node",
+        "devdocs_en_typescript",
+    ),
+    "typescript": (
+        "devdocs_en_typescript",
+        "devdocs_en_javascript",
+        "devdocs_en_node",
+    ),
+    "react": (
+        "devdocs_en_react",
+        "devdocs_en_nextjs",
+        "devdocs_en_javascript",
+        "devdocs_en_typescript",
+    ),
+    "rust": ("devdocs_en_rust",),
+    "go": ("devdocs_en_go",),
+    "php": ("devdocs_en_php", "devdocs_en_phpunit"),
+    "bash": ("devdocs_en_bash",),
+    "html": ("devdocs_en_html", "devdocs_en_css", "devdocs_en_svg"),
+    "css": ("devdocs_en_css", "devdocs_en_html", "devdocs_en_tailwindcss"),
+    "sql": (
+        "devdocs_en_postgresql",
+        "devdocs_en_mariadb",
+        "devdocs_en_sqlite",
+    ),
+    "docker": ("devdocs_en_docker", "devdocs_en_kubernetes", "devdocs_en_nginx"),
+    "kubernetes": ("devdocs_en_kubernetes", "devdocs_en_docker"),
+    "git": ("devdocs_en_git",),
+    "redis": ("devdocs_en_redis",),
+}
+
+# File extension → language. Used by detect_language_context to weight
+# extensions more heavily than free-text keyword matches.
+LANG_EXT_MAP: dict[str, str] = {
+    ".py": "python", ".pyi": "python", ".ipynb": "python",
+    ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript",
+    ".rs": "rust",
+    ".go": "go",
+    ".php": "php",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".html": "html", ".htm": "html",
+    ".css": "css", ".scss": "css",
+    ".sql": "sql",
+}
+
+# Marker filenames that pin a language even when no source file is named.
+LANG_MARKER_FILES: dict[str, str] = {
+    "pyproject.toml": "python",
+    "requirements.txt": "python",
+    "setup.py": "python",
+    "package.json": "javascript",
+    "tsconfig.json": "typescript",
+    "Cargo.toml": "rust",
+    "go.mod": "go",
+    "composer.json": "php",
+    "Dockerfile": "docker",
+    "kubernetes.yaml": "kubernetes",
+    "k8s.yaml": "kubernetes",
+}
+
+# Free-text keyword → language. Anchored to word boundaries so "go" only
+# matches the word, not substrings of "django" / "ago" / etc.
+LANG_KEYWORD_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bpython\b", re.I), "python"),
+    (re.compile(r"\bnumpy\b|\bpandas\b|\basyncio\b|\bfastapi\b", re.I), "python"),
+    (re.compile(r"\bjavascript\b|\bnode\.?js\b|\bnpm\b", re.I), "javascript"),
+    (re.compile(r"\btypescript\b|\btsc\b", re.I), "typescript"),
+    (re.compile(r"\breact\b|\bnext\.?js\b", re.I), "react"),
+    (re.compile(r"\brust\b|\bcargo\b|\btokio\b|\bserde\b", re.I), "rust"),
+    (re.compile(r"\bgolang\b", re.I), "go"),
+    (re.compile(r"\bphp\b|\blaravel\b|\bphpunit\b", re.I), "php"),
+    (re.compile(r"\bbash\b|\bshell script\b|\bzsh\b", re.I), "bash"),
+    (re.compile(r"\bpostgres(?:ql)?\b|\bmariadb\b|\bsqlite\b|\bmysql\b", re.I), "sql"),
+    (re.compile(r"\bdocker(?:file)?\b", re.I), "docker"),
+    (re.compile(r"\bkubernetes\b|\bk8s\b|\bkubectl\b", re.I), "kubernetes"),
+    (re.compile(r"\bredis\b", re.I), "redis"),
+    # CSS/HTML are deliberately weak — only fire on explicit mentions, not
+    # incidental occurrences in unrelated prose.
+]
+
+_EXT_RE = re.compile(r"(?:^|[\s/'\"`(])([\w./-]+(\.\w{1,5}))\b")
+
+
+def detect_language_context(messages: list) -> list[str]:
+    """Return an ordered list of detected language tags for the latest user
+    message. Order = priority (extension hits first, then markers, then
+    keywords). Caps at 2 languages to keep the injected block focused."""
+    if not messages:
+        return []
+    last = messages[-1]
+    if last.get("role") != "user":
+        return []
+    text = last.get("content", "")
+    if not isinstance(text, str) or not text:
+        return []
+    seen: list[str] = []
+
+    def add(lang: str) -> None:
+        if lang in LANG_ZIM_MAP_RAW and lang not in seen:
+            seen.append(lang)
+
+    # 1) Extension matches.
+    for m in _EXT_RE.finditer(text):
+        ext = m.group(2).lower()
+        if ext in LANG_EXT_MAP:
+            add(LANG_EXT_MAP[ext])
+
+    # 2) Marker filenames.
+    for marker, lang in LANG_MARKER_FILES.items():
+        # Word-boundary check to avoid matching as substring.
+        if re.search(rf"\b{re.escape(marker)}\b", text):
+            add(lang)
+
+    # 3) Keyword tokens.
+    for pat, lang in LANG_KEYWORD_PATTERNS:
+        if pat.search(text):
+            add(lang)
+
+    return seen[:2]
+
+
+def _resolve_lang_books(prefixes: tuple[str, ...], catalog: list[str]) -> list[str]:
+    """Resolve a tuple of unsuffixed ZIM prefixes against the catalog list
+    of full suffixed names. Order is preserved from the prefix tuple. If
+    multiple catalog entries match a prefix (rare — older + newer copies
+    of the same ZIM), the first one wins."""
+    out: list[str] = []
+    for prefix in prefixes:
+        for book in catalog:
+            if book == prefix or book.startswith(prefix + "_"):
+                out.append(book)
+                break
+    return out
+
+
+def _build_lang_docs_message(lang: str, books: list[str]) -> str:
+    book_list = ", ".join(books)
+    primary = books[0]
+    return (
+        f"[Krull Offline Docs — {lang} detected]\n"
+        f"Offline reference docs for {lang} are loaded into the local Kiwix server. "
+        f"Use Bash + curl to query them. Do NOT use WebFetch — it blocks localhost URLs.\n\n"
+        f"Search (titles + snippets, returns HTML):\n"
+        f"  curl -s '{KIWIX_HOST_URL}/search?books.name={primary}&pattern=<urlencoded query>&pageLength=5'\n\n"
+        f"Fetch a specific page returned by the search above:\n"
+        f"  curl -s '{KIWIX_HOST_URL}/content/{primary}/<path-from-search-result>'\n\n"
+        f"Available books for {lang}: {book_list}\n"
+        f"(Add another book by changing books.name=, or pass multiple books.name= "
+        f"params to scope across them.)\n\n"
+        f"CONSULT THESE OFFLINE DOCS BEFORE relying on training-data recall for "
+        f"{lang} stdlib/framework specifics. They are authoritative and current.\n"
+        f"[End Krull Offline Docs]"
+    )
+
+
+async def inject_lang_docs(messages: list, has_tools: bool) -> list:
+    """When the latest user message names a programming language, inject
+    a system note teaching the model the Bash+curl shape for querying the
+    matching Kiwix devdocs ZIMs.
+
+    Only fires when has_tools=True — for tools-less requests, inject_kiwix
+    already prepends real search results, which is more useful. The two
+    filters are complementary, not redundant."""
+    if not has_tools or not ENABLE_LANG_DOCS:
+        return messages
+    langs = detect_language_context(messages)
+    if not langs:
+        return messages
+    catalog = await _get_eng_book_names()
+    if not catalog:
+        return messages
+
+    parts: list[str] = []
+    fired: list[str] = []
+    for lang in langs:
+        prefixes = LANG_ZIM_MAP_RAW.get(lang, ())
+        books = _resolve_lang_books(prefixes, catalog)
+        if not books:
+            continue
+        parts.append(_build_lang_docs_message(lang, books))
+        fired.append(lang)
+    if not parts:
+        return messages
+
+    # Insert at position 1 (right after TOOL_GUIDANCE which is already at
+    # position 0). This keeps the qwen 9B's tool-use anchor undisturbed
+    # but puts the offline-docs guidance at the next-most-attended slot.
+    content = "\n\n".join(parts)
+    messages.insert(1, {"role": "system", "content": content})
+    print(
+        f"[FILTER] +lang_docs ({', '.join(fired)})",
+        file=sys.stderr, flush=True,
+    )
     return messages
 
 
@@ -2045,13 +2428,24 @@ async def apply_filters(
         # KEEP THIS AT POSITION 0 — see apply_filters docstring.
         messages.insert(0, {"role": "system", "content": TOOL_GUIDANCE})
         print("[FILTER] +tool_guidance", file=sys.stderr, flush=True)
+        # Language-aware Kiwix devdocs hint. Inserts at position 1 so it
+        # sits right behind TOOL_GUIDANCE without dislodging the tool-use
+        # anchor. Only fires when a language signal is detected in the
+        # latest user message.
+        messages = await inject_lang_docs(messages, has_tools=True)
     else:
-        if ENABLE_WEB_SEARCH:
-            messages = await inject_web_search(messages)
+        # Order matters: each injector prepends its block to the user
+        # message, so the first one to run becomes the LAST block before
+        # the user's question, AND its prepend bloats the message such
+        # that subsequent injectors would search on the wrong text. Run
+        # kiwix and map_search first (they need a clean query), then
+        # web_search last so its results sit closest to the question.
         if ENABLE_KIWIX:
             messages = await inject_kiwix(messages)
         if ENABLE_MAP_SEARCH:
             messages = await inject_map_search(messages)
+        if ENABLE_WEB_SEARCH:
+            messages = await inject_web_search(messages)
     messages = inject_project_context(messages)
     messages = inject_slash_command_protocol(messages)
     messages = inject_loop_break(messages)

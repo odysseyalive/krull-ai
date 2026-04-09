@@ -75,6 +75,8 @@ services:
       - ENABLE_KIWIX=true
       - ENABLE_DATE=true
       - ENABLE_MAP_SEARCH=true
+      - ENABLE_LANG_DOCS=true
+      - KIWIX_HOST_URL=http://localhost:8090
       - PHOTON_URL=http://krull-photon:2322
       - TILESERVER_URL=http://localhost:8070
       - SEARCH_RESULTS=5

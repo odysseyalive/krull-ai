@@ -1,6 +1,25 @@
 #!/bin/bash
+# Auto-accept tool prompts when running in --print/-p mode. In interactive
+# mode Claude Code shows the user a permission prompt for every tool call
+# and the user can click through, but in --print mode any unanswered prompt
+# blocks the run forever. The lang_docs filter (proxy/sse_patch.py) teaches
+# the model to query the offline Kiwix devdocs via `curl localhost:8090`,
+# which would be silently blocked in --print mode without this. Interactive
+# sessions are unaffected — the prompts still appear there.
+PRINT_MODE=0
+for arg in "$@"; do
+  case "$arg" in
+    -p|--print) PRINT_MODE=1; break ;;
+  esac
+done
+
+EXTRA=()
+if [ "$PRINT_MODE" -eq 1 ]; then
+  EXTRA+=(--permission-mode acceptEdits)
+fi
+
 ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
 ANTHROPIC_BASE_URL=http://localhost:4000 \
 DISABLE_TELEMETRY=1 \
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-exec claude "$@"
+exec claude "${EXTRA[@]}" "$@"
