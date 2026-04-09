@@ -15,28 +15,28 @@ model_list:
     litellm_params:
       model: openai/frob/qwen3.5-instruct:9b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-22a31037bec74dfeb561235e2a143bbe"
+      api_key: "sk-0c5e7f723fee4144a8c1fba011582d97"
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
       model: openai/frob/qwen3.5-instruct:9b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-22a31037bec74dfeb561235e2a143bbe"
+      api_key: "sk-0c5e7f723fee4144a8c1fba011582d97"
 
   - model_name: claude-opus-4-6
     litellm_params:
       model: openai/frob/qwen3.5-instruct:9b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-22a31037bec74dfeb561235e2a143bbe"
+      api_key: "sk-0c5e7f723fee4144a8c1fba011582d97"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
       model: openai/frob/qwen3.5-instruct:9b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-22a31037bec74dfeb561235e2a143bbe"
+      api_key: "sk-0c5e7f723fee4144a8c1fba011582d97"
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
       model: openai/frob/qwen3.5-instruct:9b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-22a31037bec74dfeb561235e2a143bbe"
+      api_key: "sk-0c5e7f723fee4144a8c1fba011582d97"
