@@ -72,6 +72,8 @@ CATALOG=(
     "stackexchange-hinduism|stack_exchange/hinduism.stackexchange.com_en_all_2026-02.zim|Hinduism Stack Exchange — scripture, doctrine, practice Q&A|194 MB"
     "stackexchange-buddhism|stack_exchange/buddhism.stackexchange.com_en_all_2026-02.zim|Buddhism Stack Exchange — scripture, doctrine, practice Q&A|78 MB"
     "stackexchange-judaism|stack_exchange/judaism.stackexchange.com_en_all_2026-02.zim|Mi Yodeya — Judaism Stack Exchange: halacha, Torah, Talmud Q&A|280 MB"
+    "stackexchange-christianity|stack_exchange/christianity.stackexchange.com_en_all_2026-02.zim|Christianity Stack Exchange — scripture, doctrine, denominational practice Q&A|189 MB"
+    "stackexchange-islam|stack_exchange/islam.stackexchange.com_en_all_2026-02.zim|Islam Stack Exchange — Quran, hadith, fiqh, doctrinal practice Q&A|89 MB"
     "stackexchange-biology|stack_exchange/biology.stackexchange.com_en_all_2026-02.zim|Biology Stack Exchange — research-level life sciences Q&A|403 MB"
     "stackexchange-chemistry|stack_exchange/chemistry.stackexchange.com_en_all_2026-02.zim|Chemistry Stack Exchange — mechanism, synthesis, spectroscopy Q&A|397 MB"
     "stackexchange-cs|stack_exchange/cs.stackexchange.com_en_all_2026-02.zim|Computer Science Stack Exchange — applied and theoretical CS Q&A|264 MB"
@@ -146,6 +148,8 @@ CATALOG=(
     "ted-philosophy|ted/ted_mul_philosophy_2026-01.zim|TED — Philosophy (talks on analytic, continental, applied traditions)|1.23 GB"
     "ted-ethics|ted/ted_mul_ethics_2026-01.zim|TED — Ethics (talks on applied and normative ethics)|921 MB"
     "ted-religion|ted/ted_mul_religion_2026-01.zim|TED — Religion (talks on comparative and lived religion)|1.58 GB"
+    "ted-christianity|ted/ted_mul_christianity_2026-01.zim|TED — Christianity (talks on Christian thought, history, practice)|198 MB"
+    "ted-islam|ted/ted_mul_islam_2026-01.zim|TED — Islam (talks on Islamic thought, history, practice)|189 MB"
     "ted-brain|ted/ted_mul_brain_2026-01.zim|TED — Brain (neuroscience, cognition, consciousness talks)|3.88 GB"
     "ted-economics|ted/ted_mul_economics_2026-01.zim|TED — Economics (markets, incentives, inequality, policy)|4.5 GB"
     "ted-behavioral-economics|ted/ted_mul_behavioral-economics_2026-01.zim|TED — Behavioural Economics (decision-making, psychology of choice)|424 MB"
@@ -244,6 +248,14 @@ print_bundles() {
     echo "                    stackexchange-linguistics, stackexchange-psychology."
     echo "                    For biological/physical anthropology install a Wikipedia package."
     echo ""
+    echo "  world-religions   Popular religious texts, references and lectures (~9 GB)"
+    echo "                    gutenberg-philosophy (LoC B: KJV Bible, Augustine, Aquinas,"
+    echo "                    Zarathustra, theology classics),"
+    echo "                    stackexchange-christianity, stackexchange-islam,"
+    echo "                    stackexchange-judaism, stackexchange-hinduism,"
+    echo "                    stackexchange-buddhism,"
+    echo "                    ted-religion, ted-christianity, ted-islam."
+    echo ""
 }
 
 get_bundle_keys() {
@@ -338,6 +350,9 @@ get_bundle_keys() {
             ;;
         oxford-theology-religion)
             echo "gutenberg-philosophy stackexchange-hinduism stackexchange-buddhism stackexchange-judaism ted-religion"
+            ;;
+        world-religions)
+            echo "gutenberg-philosophy stackexchange-christianity stackexchange-islam stackexchange-judaism stackexchange-hinduism stackexchange-buddhism ted-religion ted-christianity ted-islam"
             ;;
         oxford-fine-art)
             echo "gutenberg-art"
