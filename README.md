@@ -61,6 +61,26 @@ cd krull-ai
 
 First run pulls Docker images (~10 GB), starts every service, and brings up the homepage. Takes a few minutes.
 
+### macOS (Apple Silicon)
+
+On Apple Silicon Macs, Ollama has to run **natively on the host**, not inside Docker. Docker Desktop on macOS runs containers in a Linux VM, and Apple's `Virtualization.framework` does not expose the GPU — so a containerized Ollama would be CPU-only and unusable for anything above a toy model. Run it natively and you get full Metal acceleration.
+
+One-time setup before `./krull start`:
+
+```bash
+brew install --cask docker        # Docker Desktop
+brew install ollama               # Ollama
+ollama serve                      # or: brew services start ollama
+./krull start                     # auto-detects macOS
+```
+
+`./krull start` detects macOS, points Open WebUI / the SSE proxy / Krull Home at `host.docker.internal:11434`, and pulls your active model through the native daemon.
+
+Two things to know:
+
+- **Models live in `~/.ollama`**, not in this repo's `./data/ollama/`. That's native Ollama's own cache. If you later move this machine to Linux (container mode), you'll re-pull.
+- **The hardware panel won't show your GPU.** Krull Home's GPU detector is NVIDIA-only today; on Apple Silicon it reports no GPU. Inference is still fully Metal-accelerated — the panel just can't see it yet.
+
 ### Open the homepage
 
 ```

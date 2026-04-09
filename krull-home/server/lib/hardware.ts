@@ -16,6 +16,15 @@
  *     the only place nvidia-smi exists. krull-home already has the
  *     docker CLI + socket access for restarting siblings, so this
  *     piggybacks on existing infrastructure.
+ *   - macOS caveat: on Apple Silicon the `krull-ollama` container is
+ *     a busybox stub (Ollama runs natively on the host for Metal GPU
+ *     access, since Docker Desktop cannot passthrough Metal). The
+ *     nvidia-smi exec therefore fails and detectGpu() returns
+ *     { vendor: "none" }. This under-reports unified-memory Macs but
+ *     is intentional — honest no-op is better than a misleading fit
+ *     check. Proper Metal detection is a known follow-up; it needs a
+ *     host-mounted helper or a new sidecar, since the containerized
+ *     krull-home cannot introspect host Apple Silicon directly.
  *   - Cache: probes take ~50ms on a cold run — cheap enough that
  *     a 10-second cache is plenty. The UI polls at most once a
  *     page load; this is belt-and-braces against accidental polling.
