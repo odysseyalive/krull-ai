@@ -89,53 +89,115 @@ async function decodeTile(
   return entries;
 }
 
-// Build place index by fetching low-zoom tiles covering the source bounds
+// Maximum number of tiles to fetch when pre-building the place index.
+// Above this threshold the index pre-build is skipped entirely; search
+// falls back to viewport tile features + Photon, which scale fine.
+const PLACE_INDEX_TILE_BUDGET = 400;
+// Concurrent in-flight tile fetches when we do build.
+const PLACE_INDEX_CONCURRENCY = 8;
+
+interface TileCoord { z: number; x: number; y: number; }
+
+function tileRangeForBounds(
+  z: number,
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): { xMin: number; xMax: number; yMin: number; yMax: number } {
+  const n = 1 << z;
+  const xMin = Math.max(0, Math.floor(((west + 180) / 360) * n));
+  const xMax = Math.min(n - 1, Math.floor(((east + 180) / 360) * n));
+  const yMinCalc = Math.floor(
+    ((1 - Math.log(Math.tan((north * Math.PI) / 180) + 1 / Math.cos((north * Math.PI) / 180)) / Math.PI) / 2) * n
+  );
+  const yMaxCalc = Math.floor(
+    ((1 - Math.log(Math.tan((south * Math.PI) / 180) + 1 / Math.cos((south * Math.PI) / 180)) / Math.PI) / 2) * n
+  );
+  return {
+    xMin,
+    xMax,
+    yMin: Math.max(0, yMinCalc),
+    yMax: Math.min(n - 1, yMaxCalc),
+  };
+}
+
+// Run a list of async tasks with bounded concurrency.
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < Math.min(limit, tasks.length); w++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const i = next++;
+          if (i >= tasks.length) return;
+          results[i] = await tasks[i]();
+        }
+      })()
+    );
+  }
+  await Promise.all(workers);
+  return results;
+}
+
+// Build place index by fetching low-zoom tiles covering the source bounds.
+// Skips entirely for global / planet-scale sources to avoid 70k tile fetches.
 export async function buildPlaceIndex(_map: Map, sourceId: string) {
   try {
     const meta = await (await fetch(`${TILE_API}/${sourceId}`)).json();
     const bounds = meta.bounds || [-180, -85, 180, 85];
     const [west, south, east, north] = bounds;
 
-    const seen = new Set<string>();
-    const allEntries: PlaceEntry[] = [];
+    // Count candidate tiles across z4/z6/z8 and bail if it exceeds the budget.
+    const zooms = [4, 6, 8];
+    const ranges = zooms.map((z) => tileRangeForBounds(z, west, south, east, north));
+    const totalTiles = ranges.reduce(
+      (sum, r) => sum + (r.xMax - r.xMin + 1) * (r.yMax - r.yMin + 1),
+      0
+    );
 
-    // Fetch z4 and z6 tiles covering the region
-    for (const z of [4, 6, 8]) {
-      const n = 1 << z;
-      const xMin = Math.max(0, Math.floor(((west + 180) / 360) * n));
-      const xMax = Math.min(n - 1, Math.floor(((east + 180) / 360) * n));
-      const yMinCalc = Math.floor(
-        ((1 - Math.log(Math.tan((north * Math.PI) / 180) + 1 / Math.cos((north * Math.PI) / 180)) / Math.PI) / 2) * n
+    if (totalTiles > PLACE_INDEX_TILE_BUDGET) {
+      console.log(
+        `Place index pre-build skipped for "${sourceId}" (${totalTiles} tiles > ${PLACE_INDEX_TILE_BUDGET}); using viewport + Photon search.`
       );
-      const yMaxCalc = Math.floor(
-        ((1 - Math.log(Math.tan((south * Math.PI) / 180) + 1 / Math.cos((south * Math.PI) / 180)) / Math.PI) / 2) * n
-      );
-      const yMin = Math.max(0, yMinCalc);
-      const yMax = Math.min(n - 1, yMaxCalc);
+      placeIndex = [];
+      indexReady = true;
+      return;
+    }
 
-      // Fetch tiles in parallel (limited batches)
-      const promises: Promise<PlaceEntry[]>[] = [];
-      for (let x = xMin; x <= xMax; x++) {
-        for (let y = yMin; y <= yMax; y++) {
-          promises.push(decodeTile(sourceId, z, x, y));
+    const coords: TileCoord[] = [];
+    zooms.forEach((z, i) => {
+      const r = ranges[i];
+      for (let x = r.xMin; x <= r.xMax; x++) {
+        for (let y = r.yMin; y <= r.yMax; y++) {
+          coords.push({ z, x, y });
         }
       }
+    });
 
-      const results = await Promise.all(promises);
-      results.forEach((entries) => {
-        entries.forEach((e) => {
-          const key = e.name.toLowerCase();
-          if (!seen.has(key)) {
-            seen.add(key);
-            allEntries.push(e);
-          }
-        });
+    const tasks = coords.map((c) => () => decodeTile(sourceId, c.z, c.x, c.y));
+    const results = await runWithConcurrency(tasks, PLACE_INDEX_CONCURRENCY);
+
+    const seen = new Set<string>();
+    const allEntries: PlaceEntry[] = [];
+    results.forEach((entries) => {
+      entries.forEach((e) => {
+        const key = e.name.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          allEntries.push(e);
+        }
       });
-    }
+    });
 
     placeIndex = allEntries;
     indexReady = true;
-    console.log(`Place index built: ${placeIndex.length} entries`);
+    console.log(`Place index built: ${placeIndex.length} entries from ${coords.length} tiles`);
   } catch (err) {
     console.warn('Failed to build place index:', err);
   }

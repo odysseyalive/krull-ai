@@ -206,12 +206,33 @@ print_usage() {
     echo "Nautical data is from NOAA Chart Display Service (NCDS), updated weekly."
     echo "Aeronautical data is from FAA VFR Sectional Charts, updated every 56 days."
     echo ""
-    echo "After downloading, restart the tile server: docker restart krull-tileserver"
+    echo "Downloads automatically restart krull-tileserver when they finish."
     echo ""
     echo "Environment variables:"
     echo "  PROTOMAPS_PLANET_URL  Override the planet PMTiles source URL"
     echo "  TERRAIN_GLOBAL_URL    Override the global terrain PMTiles source URL"
     echo "  FAA_EDITION           Override the FAA chart edition date (e.g., 03-19-2026)"
+}
+
+# Restart the tile server so Martin re-reads file lengths and indexes.
+# Required after any download because Martin caches the file length at
+# startup and will mis-read files that grew on disk after it opened them
+# (the same reason krull-kiwix needs a restart after new ZIM files).
+restart_tileserver() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Note: docker not on PATH; restart krull-tileserver manually to load new tiles."
+        return 0
+    fi
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^krull-tileserver$'; then
+        echo "Note: krull-tileserver is not running; start the stack with ./krull start to load new tiles."
+        return 0
+    fi
+    echo "Restarting krull-tileserver to pick up new tiles..."
+    if docker restart krull-tileserver >/dev/null; then
+        echo "  ✓ krull-tileserver restarted"
+    else
+        echo "  ✗ docker restart krull-tileserver failed — restart it manually."
+    fi
 }
 
 install_pmtiles() {
@@ -723,7 +744,7 @@ cmd_remove() {
         rm "$FILEPATH"
         echo "Removed: $TARGET"
         echo ""
-        echo "Restart the tile server to apply: docker restart krull-tileserver"
+        restart_tileserver
     else
         echo "Cancelled."
     fi
@@ -779,7 +800,7 @@ case "$1" in
         fi
         download_base_tiles "$2"
         echo ""
-        echo "Restart the tile server to load it: docker restart krull-tileserver"
+        restart_tileserver
         ;;
     --terrain)
         if [ -z "$2" ]; then
@@ -788,7 +809,7 @@ case "$1" in
         fi
         download_terrain "$2"
         echo ""
-        echo "Restart the tile server to load it: docker restart krull-tileserver"
+        restart_tileserver
         ;;
     --nautical)
         if [ -z "$2" ]; then
@@ -798,7 +819,7 @@ case "$1" in
         fi
         download_nautical "$2"
         echo ""
-        echo "Restart the tile server to load it: docker restart krull-tileserver"
+        restart_tileserver
         ;;
     --aeronautical|--aero)
         if [ -z "$2" ]; then
@@ -808,7 +829,7 @@ case "$1" in
         fi
         download_aeronautical "$2"
         echo ""
-        echo "Restart the tile server to load it: docker restart krull-tileserver"
+        restart_tileserver
         ;;
     --all)
         if [ -z "$2" ]; then
@@ -905,7 +926,7 @@ case "$1" in
             fi
         fi
         echo ""
-        echo "Restart the tile server to load everything: docker restart krull-tileserver"
+        restart_tileserver
         ;;
     *)
         # Default: download everything for the region (same as --all)
@@ -995,6 +1016,6 @@ case "$1" in
             fi
         fi
         echo ""
-        echo "Restart the tile server to load everything: docker restart krull-tileserver"
+        restart_tileserver
         ;;
 esac

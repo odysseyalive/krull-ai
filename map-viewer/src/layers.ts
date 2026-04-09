@@ -8,6 +8,9 @@ import {
   hasNauticalSource,
   hasAeroSource,
   isRasterTheme,
+  getBaseSources,
+  getCurrentBaseSource,
+  setBaseSource,
   type ThemeId,
 } from './map';
 import { LABEL_GROUPS, OVERLAY_GROUPS } from './styles';
@@ -70,7 +73,57 @@ function addToggle(
   return isVisible;
 }
 
+function prettyBaseLabel(id: string): string {
+  // 'oregon' -> 'Oregon', 'us-west' -> 'Us West', 'planet' -> 'Planet'
+  return id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function setupBaseSourceSwitcher(map: Map) {
+  const baseSources = getBaseSources();
+  if (baseSources.length < 2) return; // hide when only one base map installed
+
+  const sidebar = document.getElementById('sidebar')!;
+  const styleSection = document.querySelector('.sidebar-section') as HTMLElement | null;
+
+  const section = document.createElement('div');
+  section.className = 'sidebar-section';
+
+  const header = document.createElement('div');
+  header.className = 'section-header';
+  header.textContent = 'Base Map';
+  section.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'section-body';
+
+  const current = getCurrentBaseSource();
+  baseSources.forEach((id) => {
+    const opt = document.createElement('div');
+    opt.className = 'style-option' + (id === current ? ' active' : '');
+    opt.textContent = prettyBaseLabel(id);
+    opt.addEventListener('click', () => {
+      setBaseSource(map, id);
+      body.querySelectorAll('.style-option').forEach((el) => el.classList.remove('active'));
+      opt.classList.add('active');
+    });
+    body.appendChild(opt);
+  });
+
+  section.appendChild(body);
+
+  // Insert above the existing Map Style section if present, else append.
+  if (styleSection && styleSection.parentNode === sidebar) {
+    sidebar.insertBefore(section, styleSection);
+  } else {
+    sidebar.appendChild(section);
+  }
+}
+
 export function setupLayerSwitcher(map: Map) {
+  setupBaseSourceSwitcher(map);
+
   const styleOptions = document.getElementById('style-options')!;
   const overlayOptions = document.getElementById('overlay-options')!;
   const labelOptions = document.getElementById('label-options')!;

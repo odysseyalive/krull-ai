@@ -4,15 +4,44 @@ import { buildStyle, getThemes, isRasterTheme, type ThemeId, type OverlaySources
 import { getUnits, onUnitsChange } from './units';
 
 const TILE_API = window.location.origin;
+const BASE_SOURCE_KEY = 'krull-map-base-source';
 
 let currentTheme: ThemeId = 'light';
 let currentSource: string | null = null;
 let currentOverlays: OverlaySources = {};
 let terrainEnabled = false;
+let availableBaseSources: string[] = [];
 
 export { currentTheme, currentSource };
 export { getThemes, isRasterTheme };
 export type { ThemeId } from './styles';
+
+export function getBaseSources(): string[] {
+  return availableBaseSources.slice();
+}
+
+export function getCurrentBaseSource(): string | null {
+  return currentSource;
+}
+
+export function setBaseSource(map: Map, sourceId: string) {
+  if (!availableBaseSources.includes(sourceId)) return;
+  currentSource = sourceId;
+  try {
+    localStorage.setItem(BASE_SOURCE_KEY, sourceId);
+  } catch {
+    // ignore quota / unavailable
+  }
+  map.setStyle(buildStyle(currentSource, currentTheme, currentOverlays));
+  map.once('style.load', () => {
+    if (!isRasterTheme(currentTheme)) {
+      setupContours(map);
+      if (terrainEnabled && currentOverlays.terrainSourceId) {
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.2 });
+      }
+    }
+  });
+}
 
 export function setTheme(map: Map, theme: ThemeId) {
   currentTheme = theme;
@@ -164,6 +193,30 @@ function setupContours(map: Map) {
   }
 }
 
+interface SourceMeta {
+  bounds?: [number, number, number, number];
+  center?: [number, number, number?];
+}
+
+async function fetchSourceMeta(sourceId: string): Promise<SourceMeta | null> {
+  try {
+    return (await (await fetch(`${TILE_API}/${sourceId}`)).json()) as SourceMeta;
+  } catch {
+    return null;
+  }
+}
+
+function bboxArea(bounds?: [number, number, number, number]): number {
+  if (!bounds) return 0;
+  const [w, s, e, n] = bounds;
+  return Math.max(0, e - w) * Math.max(0, n - s);
+}
+
+// A source whose bounds cover most of the planet (≥ ~50% of full 360x170).
+function isGlobalBounds(bounds?: [number, number, number, number]): boolean {
+  return bboxArea(bounds) >= (360 * 170) * 0.5;
+}
+
 export async function initMap(): Promise<Map | null> {
   const { baseSources, terrainSource, nauticalSources, aeroSources } = await getTileSources();
   if (baseSources.length === 0) {
@@ -178,7 +231,38 @@ export async function initMap(): Promise<Map | null> {
     return null;
   }
 
-  currentSource = baseSources[0];
+  availableBaseSources = baseSources.slice();
+
+  // Fetch metadata for all base sources so we can rank by coverage and read center.
+  const baseMetas = await Promise.all(baseSources.map((id) => fetchSourceMeta(id)));
+  const metaById: Record<string, SourceMeta | null> = {};
+  baseSources.forEach((id, i) => {
+    metaById[id] = baseMetas[i];
+  });
+
+  // Restore saved choice if it still exists; otherwise prefer the source with the
+  // largest bbox (planet wins over regional). Falls back to first if no metadata.
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(BASE_SOURCE_KEY);
+  } catch {
+    // ignore
+  }
+  if (saved && baseSources.includes(saved)) {
+    currentSource = saved;
+  } else {
+    let best = baseSources[0];
+    let bestArea = bboxArea(metaById[best]?.bounds);
+    for (const id of baseSources.slice(1)) {
+      const area = bboxArea(metaById[id]?.bounds);
+      if (area > bestArea) {
+        best = id;
+        bestArea = area;
+      }
+    }
+    currentSource = best;
+  }
+
   currentOverlays = {
     terrainSourceId: terrainSource,
     nauticalSourceIds: nauticalSources,
@@ -198,17 +282,16 @@ export async function initMap(): Promise<Map | null> {
     demSource.setupMaplibre(maplibregl);
   }
 
-  // Get center from tile metadata
-  let center: [number, number] = [-122.68, 45.52];
-  let zoom = 11;
-  try {
-    const meta = await (await fetch(`${TILE_API}/${currentSource}`)).json();
-    if (meta.center) {
-      center = [meta.center[0], meta.center[1]];
-      zoom = meta.center[2] || zoom;
+  // Pick initial center/zoom from the active source's metadata, with a global default.
+  const meta = metaById[currentSource] || null;
+  const globalSource = isGlobalBounds(meta?.bounds);
+  let center: [number, number] = [0, 20];
+  let zoom = globalSource ? 2 : 4;
+  if (meta?.center) {
+    center = [meta.center[0], meta.center[1]];
+    if (!globalSource && typeof meta.center[2] === 'number') {
+      zoom = meta.center[2];
     }
-  } catch {
-    // use defaults
   }
 
   // Check URL hash for saved position
