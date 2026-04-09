@@ -120,6 +120,7 @@ function parseKnowledge(text: string): {
     "gutenberg-essentials": "~65 GB",
     "gutenberg-stem": "~22 GB",
     "gutenberg-all-english": "~212 GB",
+    "world-religions": "~8.7 GB",
     // Oxford University graduate-subject bundles (Humanities division)
     "oxford-anthropology": "~24 GB",
     "oxford-archaeology": "~8.4 GB",
@@ -174,6 +175,8 @@ function parseKnowledge(text: string): {
     "gutenberg-stem": "Science, technology, medicine",
     "gutenberg-all-english":
       "All 18 Library of Congress categories as resumable pieces (equivalent to the 206 GB monolith, split by subject)",
+    "world-religions":
+      "Gutenberg LoC B (includes KJV, Douay-Rheims and World English Bibles plus Augustine, Aquinas and other theology classics), Stack Exchange Q&A for Christianity/Islam/Judaism/Hinduism/Buddhism, and TED talks on comparative religion, Christianity and Islam",
     // Oxford University graduate-subject bundles (Humanities division)
     "oxford-anthropology":
       "Cultural, archaeological, linguistic & psychological anthropology (four-field model)",
@@ -549,12 +552,36 @@ async function inspectPackageFile(
     }
 
     if (kind === "maps") {
-      // PMTiles magic: ASCII "PMTiles"
+      // PMTiles v3 header (127 bytes): 7-byte ASCII "PMTiles" magic,
+      // then a u8 spec version, then four (offset, length) u64 LE pairs
+      // describing the root directory, JSON metadata, leaf directories,
+      // and tile data sections. The file must extend past the end of
+      // every section — a truncated download (e.g. the ~128 GB planet
+      // aborted mid-stream) will still start with "PMTiles" but be
+      // shorter than tile_data_offset + tile_data_length.
       if (
         bytesRead < 7 ||
         head.slice(0, 7).toString("ascii") !== "PMTiles"
       ) {
         return { ok: false, reason: "magic", sizeBytes: stat.size };
+      }
+      if (bytesRead >= 72) {
+        if (head[7] !== 3) {
+          // Only v3 is in the wild for protomaps/planetiler output; an
+          // unknown version is more likely garbage than a real spec bump.
+          return { ok: false, reason: "magic", sizeBytes: stat.size };
+        }
+        // Four (offset, length) pairs at bytes 8..71.
+        let requiredSize = 0n;
+        for (let i = 0; i < 4; i++) {
+          const off = head.readBigUInt64LE(8 + i * 16);
+          const len = head.readBigUInt64LE(16 + i * 16);
+          const end = off + len;
+          if (end > requiredSize) requiredSize = end;
+        }
+        if (BigInt(stat.size) < requiredSize) {
+          return { ok: false, reason: "truncated", sizeBytes: stat.size };
+        }
       }
     }
 
