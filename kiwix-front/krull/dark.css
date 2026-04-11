@@ -366,6 +366,53 @@ html.krull-dark .tnote {
   border: 1px solid #1f2733 !important;
 }
 
+/* --- Wiktionary-specific elements -------------------------------------
+ * Wiktionary uses its own set of classes for collapsible nav headers,
+ * inflection/declension table wrappers, term lists, and list-switcher
+ * headers. These all ship with hard-coded light backgrounds that the
+ * generic table/div overrides don't reach. */
+html.krull-dark .NavHead {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .NavContent,
+html.krull-dark .NavFrame {
+  background-color: #11151c !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark .inflection-table-wrapper,
+html.krull-dark [class*="inflection-table-"] {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+html.krull-dark .inflection-table-title,
+html.krull-dark caption.inflection-table-title {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .term-list.columns-bg,
+html.krull-dark .columns-bg {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+}
+html.krull-dark .list-switcher-header {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .list-switcher,
+html.krull-dark .list-switcher-content {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+/* Wiktionary translation boxes */
+html.krull-dark .translations,
+html.krull-dark .translations-cell {
+  background-color: #11151c !important;
+  border-color: #1f2733 !important;
+}
+
 /* --- MediaWiki outer containers (Wikipedia/Wikivoyage/Wiktionary/
  *     Appropedia/energypedia) ------------------------------------------
  * The outermost `.mw-page-container` ships a hard-coded white background.
