@@ -87,6 +87,10 @@ Two things to know:
 http://localhost:8000
 ```
 
+<p align="center">
+  <img src="assets/readme-homepage.jpg" alt="Krull homepage — lighthouse painting over a sea of books with three doors to AI Chat, Maps, and Knowledge" width="100%">
+</p>
+
 That's it. Everything else — pulling a model, installing knowledge packages, downloading maps, editing your `.env`, restarting services — happens from the homepage.
 
 You'll see three doors:
