@@ -386,13 +386,16 @@ html.krull-dark img.mw-file-element {
   color: #e6edf3 !important;
   border-color: #1f2733 !important;
 }
-/* Inline-styled unclassed divs inside .thumbinner — some Wikipedia
- * templates (e.g. location-map overlays on the Apollo 11 landing
- * site) put an inline `background-color:#FFFFFF` on a wrapper div.
- * Since it's inline but NOT !important, a CSS rule with !important
- * still wins. Target unclassed divs directly inside .thumbinner. */
-html.krull-dark .thumbinner > div:not([class]) {
+/* Inline-styled unclassed divs inside .thumbinner / navbox cells —
+ * some Wikipedia templates (location-map overlays on Apollo 11,
+ * navbox category wrappers on Photosynthesis) put an inline
+ *   background-color: #FFFFFF; border: 1px solid #CCCCCC
+ * on a wrapper div. Descendant selector (not direct child) so
+ * we catch nested wrappers too. */
+html.krull-dark .thumbinner div:not([class]),
+html.krull-dark [class*="navbox"] div:not([class]) {
   background-color: transparent !important;
+  border-color: #1f2733 !important;
 }
 
 /* Wikipedia gallery .whitebg modifier — Wikipedia's mod-gallery
@@ -415,6 +418,28 @@ html.krull-dark div[class*="mw-highlight-lang-"] {
   background-color: #11151c !important;
   color: #e6edf3 !important;
   border-color: #1f2733 !important;
+}
+/* ZIM attribution footer — most MediaWiki-based ZIMs (ArchWiki,
+ * Wikipedia, Wikivoyage, Wiktionary, etc.) append a `.zim-footer`
+ * div at the end of every article with the license/attribution
+ * line. It ships with a hard-coded
+ *   background-image: linear-gradient(#e8e8e8, #fff)
+ * which our background-color dark rules can't override (gradients
+ * win on a different axis). Kill the image and set a subtle dark
+ * panel instead. */
+html.krull-dark .zim-footer {
+  background-image: none !important;
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 6px !important;
+  padding: 14px 18px !important;
+  margin-top: 32px !important;
+  font-size: 13px !important;
+}
+html.krull-dark .zim-footer a,
+html.krull-dark .zim-footer a.external {
+  color: #6fb3d2 !important;
 }
 /* Wikipedia .notheme wrapper divs — meant to preserve publisher
  * colors on images that need a light backdrop, but also applied to
