@@ -37,6 +37,24 @@
       return [];
     });
 
+  // Shared helper exposed to other scripts (top-nav.js) so the
+  // OPDS scoping guarantee — the one thing protecting us from
+  // kiwix's HTTP 400 "confusion of tongues" — lives in exactly
+  // one place.
+  function buildSearchUrl(q) {
+    return booksPromise.then(function (books) {
+      var url = "/search?pattern=" + encodeURIComponent(q);
+      for (var i = 0; i < books.length; i++) {
+        url += "&books.name=" + encodeURIComponent(books[i]);
+      }
+      return url;
+    });
+  }
+  window.__krullSearch = {
+    books: function () { return booksPromise; },
+    buildSearchUrl: buildSearchUrl,
+  };
+
   function parseMonoEngBooks(xml) {
     // Split on <entry> and keep only ones with a mono-eng <language>.
     // Simpler than a proper DOM parse and avoids namespace headaches
@@ -132,11 +150,7 @@
     clearQFromHash();
     clearQFromCookie();
 
-    booksPromise.then(function (books) {
-      var url = "/search?pattern=" + encodeURIComponent(q);
-      for (var i = 0; i < books.length; i++) {
-        url += "&books.name=" + encodeURIComponent(books[i]);
-      }
+    buildSearchUrl(q).then(function (url) {
       window.location.href = url;
     });
   }
