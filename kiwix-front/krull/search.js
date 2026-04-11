@@ -53,6 +53,14 @@
   window.__krullSearch = {
     books: function () { return booksPromise; },
     buildSearchUrl: buildSearchUrl,
+    // Resolve the human-readable title for a ZIM book name, or
+    // fall back to the raw name. Used by top-nav.js to label the
+    // book bar on /content/ pages.
+    bookTitle: function (name) {
+      return titlesPromise.then(function (map) {
+        return map[name] || name;
+      });
+    },
   };
 
   function parseMonoEngBooks(xml) {
@@ -72,6 +80,30 @@
     }
     return out;
   }
+
+  // Build a book-name → display-title map from the OPDS feed so
+  // the in-page book bar on /content/ pages can label the current
+  // book with its human-readable title instead of the raw ZIM
+  // filename. Separate promise so it doesn't block search URL
+  // construction (buildSearchUrl needs the name list only).
+  var titlesPromise = fetch("/catalog/v2/entries?count=500", {
+    credentials: "same-origin",
+  })
+    .then(function (r) { return r.ok ? r.text() : ""; })
+    .then(function (xml) {
+      var map = {};
+      var chunks = xml.split(/<entry[>\s]/).slice(1);
+      for (var i = 0; i < chunks.length; i++) {
+        var chunk = chunks[i];
+        var title = chunk.match(/<title>([^<]+)<\/title>/);
+        var href = chunk.match(/href="\/content\/([^/"]+)"/);
+        if (title && href) {
+          map[href[1]] = title[1].trim();
+        }
+      }
+      return map;
+    })
+    .catch(function () { return {}; });
 
   // Strip the stock library-filter's "q" param from the hash AND from
   // the stock "filters" cookie.

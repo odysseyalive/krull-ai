@@ -104,6 +104,97 @@
     );
   }
 
+  // Parse the book name from a /content/<book>/<path> URL. Returns
+  // null if we're not on a content page. The book name is the first
+  // path segment after /content/ and corresponds to the ZIM filename
+  // without the .zim extension (e.g. archlinux_en_all_maxi_2025-09).
+  function parseContentUrl() {
+    var path = window.location.pathname || "";
+    var m = path.match(/^\/content\/([^/]+)/);
+    return m ? m[1] : null;
+  }
+
+  // Build the kiwix-style book bar for /content/ pages: home link
+  // on the left (back to the library welcome), a book-title link
+  // (goes to the book's main page), and a per-book search box that
+  // submits to /search?pattern=X&books.name=<book> — scoping the
+  // query to this book only, matching what kiwix's own viewer
+  // toolbar does on /viewer pages.
+  //
+  // We deliberately don't try to replicate kiwix's autocomplete
+  // dropdown — that's wired up by the viewer shell's own JS and
+  // isn't something we can cleanly borrow. A plain submit is
+  // enough for the common case.
+  function renderBookBar(bookName) {
+    var bar = el("div", { "class": "krull-bookbar" });
+
+    // Left cluster: home + book title
+    var left = el("div", { "class": "krull-bookbar__left" });
+
+    var homeBtn = el("a", {
+      href: "/",
+      "class": "krull-bookbar__home",
+      title: "Go to welcome page",
+      "aria-label": "Go to welcome page",
+      text: "🏠",
+    });
+
+    var bookLink = el("a", {
+      href: "/content/" + encodeURIComponent(bookName) + "/",
+      "class": "krull-bookbar__book",
+      title: "Book main page",
+      text: bookName, // replaced once the OPDS title resolves
+    });
+
+    left.appendChild(homeBtn);
+    left.appendChild(bookLink);
+
+    // Right cluster: per-book search form
+    var input = el("input", {
+      type: "text",
+      name: "pattern",
+      "class": "krull-bookbar__input",
+      placeholder: "Search '" + bookName + "'",
+      autocomplete: "off",
+    });
+
+    var form = el(
+      "form",
+      { "class": "krull-bookbar__form", method: "get", action: "/search" },
+      [input]
+    );
+
+    // Hijack submit to build the books.name-scoped URL.
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var q = input.value.trim();
+      if (!q) return;
+      var url = "/search?pattern=" + encodeURIComponent(q) +
+        "&books.name=" + encodeURIComponent(bookName);
+      var overlay = document.querySelector(".krull-search-overlay");
+      if (overlay) overlay.classList.add("is-visible");
+      window.location.href = url;
+    });
+
+    bar.appendChild(left);
+    bar.appendChild(form);
+
+    // Upgrade the book title + input placeholder once the OPDS
+    // catalog resolves (async). Fall back gracefully to the raw
+    // book name if the fetch failed.
+    if (window.__krullSearch && window.__krullSearch.bookTitle) {
+      window.__krullSearch.bookTitle(bookName).then(function (title) {
+        if (title && title !== bookName) {
+          bookLink.textContent = title;
+          bookLink.title = title + " — main page";
+          input.placeholder = "Search '" + title + "'";
+        }
+      });
+    }
+
+    return bar;
+  }
+
   function buildOverlay() {
     var spinner = el("div", {
       "class": "krull-spinner",
@@ -253,6 +344,21 @@
       document.body.insertBefore(header, document.body.firstChild);
     } else {
       document.body.appendChild(header);
+    }
+
+    // On direct /content/ pages, add a book bar below the Krull
+    // header matching the toolbar kiwix shows on /viewer pages:
+    // home link, book title, per-book search. Gives both URL
+    // styles a consistent two-row header.
+    var bookName = parseContentUrl();
+    if (bookName) {
+      var bookBar = renderBookBar(bookName);
+      // Insert directly after the header so it sits flush below.
+      if (header.nextSibling) {
+        document.body.insertBefore(bookBar, header.nextSibling);
+      } else {
+        document.body.appendChild(bookBar);
+      }
     }
 
     handleSubmit(header, overlay);

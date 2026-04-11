@@ -990,6 +990,90 @@ html.krull-dark .krull-topnav__submit:hover {
  * search returns in under ~150ms the user barely sees a flash; if
  * it takes longer they see intentional feedback instead of a blank
  * white flash. Hidden by default; .is-visible triggers the fade. */
+/* --- /content/ page book bar ----------------------------------------
+ * Matches kiwix's own #kiwixtoolbar that appears on /viewer pages:
+ * home link + book title on the left, per-book search on the right.
+ * Sits immediately under the fixed .krull-topnav in normal flow,
+ * so the article content below it starts after both rows. */
+html.krull-dark .krull-bookbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  height: 41px !important;
+  padding: 0 16px !important;
+  background-color: #11151c !important;
+  border-bottom: 1px solid #1f2733 !important;
+  font-size: 13px !important;
+  box-sizing: border-box !important;
+}
+html.krull-dark .krull-bookbar__left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+  overflow: hidden !important;
+}
+html.krull-dark .krull-bookbar__home {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 30px !important;
+  height: 30px !important;
+  background-color: #161b25 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 4px !important;
+  color: #d4a574 !important;
+  text-decoration: none !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+  transition: border-color 160ms ease !important;
+}
+html.krull-dark .krull-bookbar__home:hover {
+  border-color: #d4a574 !important;
+}
+html.krull-dark .krull-bookbar__book {
+  color: #d4a574 !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 320px !important;
+  transition: color 160ms ease !important;
+}
+html.krull-dark .krull-bookbar__book:hover {
+  color: #e6b883 !important;
+}
+html.krull-dark .krull-bookbar__form {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0 !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+}
+html.krull-dark .krull-bookbar__input {
+  height: 30px !important;
+  width: 260px !important;
+  padding: 0 12px !important;
+  background-color: #161b25 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 4px !important;
+  font-size: 13px !important;
+  outline: none !important;
+  transition: border-color 160ms ease !important;
+}
+html.krull-dark .krull-bookbar__input:focus {
+  border-color: #d4a574 !important;
+}
+html.krull-dark .krull-bookbar__input::placeholder {
+  color: #5a6577 !important;
+}
+
 html.krull-dark .krull-search-overlay {
   position: fixed !important;
   inset: 0 !important;
