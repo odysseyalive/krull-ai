@@ -1047,7 +1047,7 @@ html.krull-dark .krull-error__hint a:hover {
 }
 
 /* =====================================================================
-   Search results page polish (body.krull-search-page)
+   Search results page polish (bodybody:has(> .results))
    =====================================================================
    Kiwix-serve's default /search HTML is a very plain
    <div.header> + <div.results> with <ul><li> items. We restyle it
@@ -1055,13 +1055,14 @@ html.krull-dark .krull-error__hint a:hover {
    class names are kiwix-serve's own, so any upstream change still
    falls back to the base theme rules earlier in this file. */
 
-html.krull-dark .krull-search-page {
+html.krull-dark body:has(> .results) {
   max-width: 920px !important;
   margin: 0 auto !important;
-  padding: 32px 24px 64px !important;
+  /* 56px for the fixed .krull-topnav + 32px breathing room. */
+  padding: 88px 24px 64px !important;
 }
 
-html.krull-dark .krull-search-page .header {
+html.krull-dark body:has(> .results) .header {
   font-family: Georgia, "Times New Roman", serif !important;
   font-size: 20px !important;
   color: #8b96a8 !important;
@@ -1070,12 +1071,12 @@ html.krull-dark .krull-search-page .header {
   margin-bottom: 24px !important;
   letter-spacing: 0.02em !important;
 }
-html.krull-dark .krull-search-page .header b {
+html.krull-dark body:has(> .results) .header b {
   color: #d4a574 !important;
   font-weight: 600 !important;
 }
 
-html.krull-dark .krull-search-page .results ul {
+html.krull-dark body:has(> .results) .results ul {
   list-style: none !important;
   padding: 0 !important;
   margin: 0 !important;
@@ -1084,7 +1085,7 @@ html.krull-dark .krull-search-page .results ul {
   gap: 14px !important;
 }
 
-html.krull-dark .krull-search-page .results li {
+html.krull-dark body:has(> .results) .results li {
   display: block !important;
   padding: 18px 22px !important;
   background-color: #11151c !important;
@@ -1092,12 +1093,12 @@ html.krull-dark .krull-search-page .results li {
   border-radius: 6px !important;
   transition: border-color 160ms ease, transform 160ms ease !important;
 }
-html.krull-dark .krull-search-page .results li:hover {
+html.krull-dark body:has(> .results) .results li:hover {
   border-color: #d4a574 !important;
   transform: translateY(-1px) !important;
 }
 
-html.krull-dark .krull-search-page .results li > a {
+html.krull-dark body:has(> .results) .results li > a {
   display: block !important;
   font-family: Georgia, "Times New Roman", serif !important;
   font-size: 18px !important;
@@ -1107,14 +1108,14 @@ html.krull-dark .krull-search-page .results li > a {
   margin-bottom: 6px !important;
   letter-spacing: 0.01em !important;
 }
-html.krull-dark .krull-search-page .results li > a:hover {
+html.krull-dark body:has(> .results) .results li > a:hover {
   color: #e6b883 !important;
   text-decoration: underline !important;
   text-decoration-color: #d4a574 !important;
   text-underline-offset: 3px !important;
 }
 
-html.krull-dark .krull-search-page .results cite {
+html.krull-dark body:has(> .results) .results cite {
   display: block !important;
   font-style: normal !important;
   color: #8b96a8 !important;
@@ -1126,12 +1127,12 @@ html.krull-dark .krull-search-page .results cite {
   -webkit-box-orient: vertical !important;
   overflow: hidden !important;
 }
-html.krull-dark .krull-search-page .results cite b {
+html.krull-dark body:has(> .results) .results cite b {
   color: #e6edf3 !important;
   font-weight: 600 !important;
 }
 
-html.krull-dark .krull-search-page .results .book-title {
+html.krull-dark body:has(> .results) .results .book-title {
   display: inline-block !important;
   padding: 2px 10px !important;
   background-color: #161b25 !important;
@@ -1145,21 +1146,21 @@ html.krull-dark .krull-search-page .results .book-title {
   margin-right: 8px !important;
 }
 
-html.krull-dark .krull-search-page .results .informations {
+html.krull-dark body:has(> .results) .results .informations {
   display: inline-block !important;
   color: #5a6577 !important;
   font-size: 12px !important;
   font-style: italic !important;
 }
 
-html.krull-dark .krull-search-page .footer {
+html.krull-dark body:has(> .results) .footer {
   margin-top: 32px !important;
   padding-top: 24px !important;
   border-top: 1px solid #1f2733 !important;
   text-align: center !important;
   color: #8b96a8 !important;
 }
-html.krull-dark .krull-search-page .footer a {
+html.krull-dark body:has(> .results) .footer a {
   display: inline-block !important;
   padding: 8px 14px !important;
   margin: 0 4px !important;
@@ -1171,7 +1172,7 @@ html.krull-dark .krull-search-page .footer a {
   font-size: 14px !important;
   transition: border-color 160ms ease !important;
 }
-html.krull-dark .krull-search-page .footer a:hover {
+html.krull-dark body:has(> .results) .footer a:hover {
   border-color: #d4a574 !important;
 }
 

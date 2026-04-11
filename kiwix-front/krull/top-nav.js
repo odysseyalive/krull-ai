@@ -211,21 +211,29 @@
   }
 
   function tagSearchPage() {
-    // Let the CSS polish the results page without a URL check in
-    // every selector. A class on <body> is the cheapest hook.
-    if (document.body && document.body.querySelector(".results")) {
-      document.body.classList.add("krull-search-page");
-    }
+    // Historically we added a .krull-search-page class to <body> at
+    // DOMContentLoaded so CSS could scope the search-results polish.
+    // That caused a FOUC — the raw search results would flash for
+    // one frame before the class applied. We now target the page
+    // via `body:has(> .results)` in dark.css, which matches from
+    // first paint. This function is kept as a no-op for backward
+    // compatibility with any callers that reference it.
   }
 
   function init() {
+    // Always mount the loading overlay, on every page — including
+    // the welcome page. search.js looks it up by class to show it
+    // during the submit→navigate window so the user sees purposeful
+    // feedback instead of a frozen page or a flash of the next one.
+    var overlay = buildOverlay();
+    document.body.appendChild(overlay);
+
     if (isWelcomePage()) {
       renderWelcomeHero();
       return;
     }
 
     var header = buildTopNav();
-    var overlay = buildOverlay();
 
     // Insert at the very top of <body> so fixed positioning + the
     // body padding-top in dark.css yields a predictable layout
@@ -235,7 +243,6 @@
     } else {
       document.body.appendChild(header);
     }
-    document.body.appendChild(overlay);
 
     handleSubmit(header, overlay);
     tagSearchPage();

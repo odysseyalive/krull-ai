@@ -150,6 +150,12 @@
     clearQFromHash();
     clearQFromCookie();
 
+    // Show the loading overlay (mounted by top-nav.js on every page)
+    // so the submit→navigate window doesn't look frozen or flash the
+    // welcome page before the results arrive.
+    var overlay = document.querySelector(".krull-search-overlay");
+    if (overlay) overlay.classList.add("is-visible");
+
     buildSearchUrl(q).then(function (url) {
       window.location.href = url;
     });
