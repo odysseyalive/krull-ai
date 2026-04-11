@@ -97,6 +97,55 @@ class Filter:
 
     def __init__(self):
         self.valves = self.Valves()
+        self._eng_books: list[str] | None = None
+
+    async def _get_eng_book_names(self) -> list[str]:
+        """Fetch and cache the list of strict-English book names from the
+        Kiwix OPDS catalog. kiwix-serve rejects unscoped searches when
+        books in multiple languages are loaded, so we must scope every
+        search to English-only books via books.name= parameters.
+
+        The books.name= param expects the FULL ZIM filename minus .zim
+        (e.g. 'devdocs_en_python_2026-02'), not the OPDS <name> element.
+        We extract the suffixed name from each entry's /content/<name> href."""
+        if self._eng_books is not None:
+            return self._eng_books
+        try:
+            import aiohttp
+
+            url = f"{self.valves.kiwix_url}/catalog/v2/entries?count=500"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status != 200:
+                        self._eng_books = []
+                        return self._eng_books
+                    xml_text = await resp.text()
+
+            ns = {"a": "http://www.w3.org/2005/Atom"}
+            root = ET.fromstring(xml_text)
+            books: list[str] = []
+            for entry in root.findall("a:entry", ns):
+                lang_el = entry.find("a:language", ns)
+                if lang_el is None:
+                    continue
+                lang = (lang_el.text or "").strip()
+                if "," in lang or lang != "eng":
+                    continue
+                full_name: str | None = None
+                for link in entry.findall("a:link", ns):
+                    href = link.attrib.get("href", "")
+                    if href.startswith("/content/"):
+                        full_name = href[len("/content/"):].rstrip("/")
+                        break
+                if not full_name:
+                    continue
+                books.append(full_name)
+            self._eng_books = books
+        except Exception:
+            self._eng_books = []
+        return self._eng_books
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         if not self.valves.enabled:
@@ -131,14 +180,22 @@ class Filter:
         try:
             import aiohttp
 
+            book_names = await self._get_eng_book_names()
+            if not book_names:
+                return body
+
             # Over-fetch so we have headroom to filter out junk results
             # (tag listings, index pages, etc) and still end up with
             # num_results actual content items.
+            params = [
+                ("pattern", search_pattern),
+                ("format", "xml"),
+                ("pageLength", str(self.valves.num_results * 4)),
+            ]
+            params.extend(("books.name", b) for b in book_names)
             search_url = (
-                f"{self.valves.kiwix_url}/search"
-                f"?pattern={urllib.parse.quote(search_pattern)}"
-                f"&format=xml"
-                f"&pageLength={self.valves.num_results * 4}"
+                f"{self.valves.kiwix_url}/search?"
+                + urllib.parse.urlencode(params)
             )
 
             async with aiohttp.ClientSession() as session:
