@@ -333,6 +333,225 @@ html.krull-dark .spinner {
   background-color: #0b0e14 !important;
   color: #e6edf3 !important;
 }
+/* Gutenberg `.mynote` transcriber-notes block — shipped with a
+ * lavender `#ddddee` background that the generic overrides miss
+ * because it's set inline on the class. Dark-panel treatment so
+ * it reads as a callout at the start of the book. */
+html.krull-dark .mynote {
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border: 1px solid #1f2733 !important;
+  border-left: 3px solid #d4a574 !important;
+  border-radius: 4px !important;
+  padding: 14px 20px !important;
+  margin: 28px auto !important;
+  font-style: italic !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+
+/* =====================================================================
+   Gutenberg book-reader layout (body.krull-zim-gutenberg)
+   =====================================================================
+   Gutenberg ZIMs serve authored HTML that's essentially flat markup
+   at body level: unclassed <h1>, <h2>, <p>, <blockquote>, etc.,
+   spanning the full iframe width in a plain Times-New-Roman serif.
+   This section applies a book-reader layout: centered column,
+   generous vertical rhythm, typographic hierarchy in parchment
+   gold, and reading-optimized line length and leading.
+
+   Scoped tightly to .krull-zim-gutenberg so it never leaks to
+   Wikipedia, Stack Exchange, or Wiktionary content that uses
+   wrapper-based markup. */
+
+html.krull-dark body.krull-zim-gutenberg {
+  max-width: 720px !important;
+  margin: 0 auto !important;
+  padding: 60px 32px 120px !important;
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype",
+               "Times New Roman", serif !important;
+  font-size: 17px !important;
+  line-height: 1.75 !important;
+  color: #d6d8dc !important;
+}
+
+/* Title page treatment — uppercase title at the top of a book,
+ * roomy letter-spacing, parchment gold. Books often have the
+ * title + author + "A RECORD OF..." sub-lines stacked. */
+html.krull-dark body.krull-zim-gutenberg > h1 {
+  font-size: 32px !important;
+  font-weight: 600 !important;
+  color: #d4a574 !important;
+  text-align: center !important;
+  letter-spacing: 0.06em !important;
+  line-height: 1.2 !important;
+  margin: 48px 0 20px !important;
+  padding: 0 !important;
+  border: none !important;
+}
+html.krull-dark body.krull-zim-gutenberg > h2 {
+  font-size: 20px !important;
+  font-weight: 500 !important;
+  color: #d4a574 !important;
+  text-align: center !important;
+  letter-spacing: 0.04em !important;
+  line-height: 1.35 !important;
+  margin: 40px 0 20px !important;
+  padding: 0 !important;
+  border: none !important;
+}
+html.krull-dark body.krull-zim-gutenberg > h3,
+html.krull-dark body.krull-zim-gutenberg > h4 {
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  color: #b8bec9 !important;
+  text-align: center !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  line-height: 1.6 !important;
+  max-width: 520px !important;
+  margin: 24px auto !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+/* Paragraphs — reading comfort through generous leading and a
+ * small first-line indent for body copy. The `:first-of-type`
+ * and `+h1/h2/h3` child paragraphs don't get the indent (they
+ * open a section). */
+html.krull-dark body.krull-zim-gutenberg > p {
+  margin: 0 0 1.2em !important;
+  text-indent: 1.8em !important;
+  text-align: justify !important;
+  hyphens: auto !important;
+}
+html.krull-dark body.krull-zim-gutenberg > h1 + p,
+html.krull-dark body.krull-zim-gutenberg > h2 + p,
+html.krull-dark body.krull-zim-gutenberg > h3 + p,
+html.krull-dark body.krull-zim-gutenberg > h4 + p,
+html.krull-dark body.krull-zim-gutenberg > p:first-of-type {
+  text-indent: 0 !important;
+}
+
+/* Blockquote — indented letter with parchment-gold accent bar */
+html.krull-dark body.krull-zim-gutenberg > blockquote,
+html.krull-dark body.krull-zim-gutenberg blockquote {
+  margin: 1.5em 0 1.5em 0 !important;
+  padding: 0 20px 0 24px !important;
+  border-left: 3px solid #d4a574 !important;
+  color: #b8bec9 !important;
+  font-size: 16px !important;
+  line-height: 1.7 !important;
+}
+html.krull-dark body.krull-zim-gutenberg > blockquote p {
+  text-indent: 0 !important;
+}
+
+/* Pre blocks (often Gutenberg metadata header + boilerplate) —
+ * small, muted, monospace, not jarring. Empty <pre> elements
+ * get hidden entirely — Gutenberg's HTML ships with stray empty
+ * ones that would otherwise render as bare dark panels. */
+html.krull-dark body.krull-zim-gutenberg > pre {
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 4px !important;
+  padding: 16px 20px !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace !important;
+  white-space: pre-wrap !important;
+  overflow-x: auto !important;
+  margin: 24px 0 !important;
+}
+html.krull-dark body.krull-zim-gutenberg > pre:empty {
+  display: none !important;
+}
+/* Empty body-level <p> elements Gutenberg uses as whitespace
+ * spacers between headings. With our generous vertical rhythm
+ * already handling spacing, these become redundant air-gaps. */
+html.krull-dark body.krull-zim-gutenberg > p:empty {
+  display: none !important;
+  margin: 0 !important;
+}
+
+/* Horizontal rules — Gutenberg books use them between sections.
+ * Replace the default 1px gray line with a centered parchment-gold
+ * hairline that matches the book's voice. */
+html.krull-dark body.krull-zim-gutenberg > hr {
+  border: none !important;
+  height: 1px !important;
+  width: 40% !important;
+  margin: 48px auto !important;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    #d4a574 20%,
+    #d4a574 80%,
+    transparent 100%
+  ) !important;
+}
+
+/* Lists — keep classic serif book styling */
+html.krull-dark body.krull-zim-gutenberg > ul,
+html.krull-dark body.krull-zim-gutenberg > ol {
+  padding-left: 2em !important;
+  margin: 1em 0 !important;
+}
+html.krull-dark body.krull-zim-gutenberg li {
+  margin: 0.4em 0 !important;
+}
+
+/* Links — blue with hover */
+html.krull-dark body.krull-zim-gutenberg a,
+html.krull-dark body.krull-zim-gutenberg a:link {
+  color: #6fb3d2 !important;
+  text-decoration: none !important;
+  border-bottom: 1px solid rgba(111, 179, 210, 0.3) !important;
+  transition: border-color 160ms ease, color 160ms ease !important;
+}
+html.krull-dark body.krull-zim-gutenberg a:hover {
+  color: #d4a574 !important;
+  border-bottom-color: #d4a574 !important;
+}
+
+/* Images — center them with breathing room, cap width to column */
+html.krull-dark body.krull-zim-gutenberg img {
+  display: block !important;
+  max-width: 100% !important;
+  height: auto !important;
+  margin: 24px auto !important;
+  border-radius: 2px !important;
+}
+
+/* Page-top chrome that Gutenberg ZIMs plant at the very top of
+ * the HTML as the first body child — an unclassed <div> holding
+ * `.zim_info` span with info + download links. Pin it to the
+ * top-right corner as subtle tools, dimmed by default until
+ * hover, so the book title space is clean. Icons themselves
+ * use Font Awesome glyphs which we leave alone. */
+html.krull-dark body.krull-zim-gutenberg > div:first-child:has(.zim_info) {
+  position: fixed !important;
+  top: 108px !important;
+  right: 20px !important;
+  z-index: 5 !important;
+  opacity: 0.45 !important;
+  display: flex !important;
+  gap: 10px !important;
+  padding: 6px 10px !important;
+  background-color: rgba(17, 21, 28, 0.85) !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 20px !important;
+  transition: opacity 200ms ease !important;
+}
+html.krull-dark body.krull-zim-gutenberg > div:first-child:has(.zim_info):hover {
+  opacity: 1 !important;
+}
+html.krull-dark body.krull-zim-gutenberg .zim_info a,
+html.krull-dark body.krull-zim-gutenberg .zim_info a:link {
+  border-bottom: none !important;
+  color: #d4a574 !important;
+}
 /* Gutenberg book cover/info page (`*_cover.NNN`).
  * The bibrec metadata card ships a hard-coded white background from
  * style.css. Children (`.cover-detail`, `.label`, `.label-value`,

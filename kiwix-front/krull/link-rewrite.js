@@ -187,9 +187,30 @@
     }
   }
 
+  // ── Body tagging by ZIM source ────────────────────────────────────
+  //
+  // Different ZIM sources produce HTML with very different markup
+  // conventions, and our dark.css needs per-source layout rules
+  // (Gutenberg books are flat body-level HTML that needs a
+  // book-reader layout, Appropedia uses MediaWiki wrappers, etc.)
+  // We tag <body> with a class derived from the URL path so CSS
+  // can scope layout overrides cleanly.
+  function tagBodyBySource() {
+    var m = window.location.pathname.match(/^\/content\/([^/]+)/);
+    if (!m) return;
+    var zimName = m[1];
+    // First path segment of the ZIM name is the source family.
+    // e.g. "gutenberg_en_lcc-q_2026-03" → "gutenberg"
+    var family = zimName.split("_")[0];
+    if (family) {
+      document.body.classList.add("krull-zim-" + family);
+    }
+  }
+
   // ── Bootstrap ─────────────────────────────────────────────────────
 
   function init() {
+    tagBodyBySource();
     fetchCatalog().then(function () {
       rewriteAllLinks(document);
 
