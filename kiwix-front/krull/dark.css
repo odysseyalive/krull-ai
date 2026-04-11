@@ -1250,11 +1250,38 @@ html.krull-dark body > .kiwixNav #searchFilter {
   flex: 1 !important;
   height: 36px !important;
   padding: 0 14px !important;
-  background-color: #0b0e14 !important;
+  background-color: #161b25 !important;
   color: #e6edf3 !important;
   border: 1px solid #1f2733 !important;
   border-radius: 4px !important;
   font-size: 14px !important;
+}
+/* The stock .kiwixNav__select wrapper that each <select> lives
+ * inside ships with border-radius: 10px / height: 30px, which
+ * clips the inner 36px / radius-4px select and produces a
+ * visible shape mismatch. Make the wrapper invisible — its
+ * ::after arrow still positions relative to it, and the inner
+ * select provides the visible border + background. */
+html.krull-dark body > .kiwixNav .kiwixNav__select {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  height: auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  position: relative !important;
+}
+/* Re-anchor the custom ▼ arrow so it sits inside the select,
+ * not outside the (now-invisible) wrapper. */
+html.krull-dark body > .kiwixNav .kiwixNav__select::after {
+  position: absolute !important;
+  right: 12px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  background: transparent !important;
+  color: #d4a574 !important;
+  pointer-events: none !important;
+  font-size: 10px !important;
 }
 html.krull-dark body > .kiwixNav #searchFilter:focus {
   outline: none !important;
