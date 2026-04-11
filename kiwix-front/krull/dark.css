@@ -366,6 +366,70 @@ html.krull-dark .tnote {
   border: 1px solid #1f2733 !important;
 }
 
+/* --- Wikipedia figures, thumbnails, and code blocks -------------------
+ * Wikipedia wraps images in <figure> and legacy .thumbinner/.thumbimage
+ * divs that ship with hard-coded light backgrounds. The images
+ * themselves render on top of these, so making them transparent (or
+ * dark) just shows through to the body background. Also handles code
+ * blocks from MediaWiki's SyntaxHighlight extension (.mw-highlight). */
+html.krull-dark figure,
+html.krull-dark figure.mw-default-size,
+html.krull-dark figure[class*="mw-halign-"],
+html.krull-dark figcaption,
+html.krull-dark .thumb,
+html.krull-dark .thumbinner,
+html.krull-dark .thumbimage,
+html.krull-dark .multiimageinner,
+html.krull-dark .thumbinner.multiimageinner {
+  background-color: transparent !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+/* Syntax-highlighted code blocks from the SyntaxHighlight extension.
+ * Matches all language variants (mw-highlight-lang-python, -go, -bash,
+ * -python3, etc.) via attribute selector. */
+html.krull-dark .mw-highlight,
+html.krull-dark div[class*="mw-highlight-lang-"] {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+/* Wikipedia .notheme wrapper divs — meant to preserve publisher
+ * colors on images that need a light backdrop, but also applied to
+ * plain wrapper divs that end up as bright blocks. Dark the wrappers;
+ * let the images inside keep their original presentation. */
+html.krull-dark div.notheme:not(:has(img)),
+html.krull-dark div.notheme {
+  background-color: #11151c !important;
+}
+/* Wikipedia .skin-invert-image wrapper — hosts images whose pixels
+ * get CSS filter: invert() applied in dark mode (diagrams, graphs).
+ * The wrapper's own background should be transparent so the dark
+ * body shows through around the inverted image. */
+html.krull-dark .skin-invert-image {
+  background-color: transparent !important;
+}
+/* Wikipedia .unsolved problem callout — hard-coded light background. */
+html.krull-dark .unsolved {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+  border-left: 4px solid #d4a574 !important;
+}
+/* Wikipedia sister-site boxes (e.g. "Wikiquote has quotes related to
+ * this person") — shown in biography articles. Light background. */
+html.krull-dark .side-box,
+html.krull-dark .sistersitebox {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+/* Wikipedia CategoryTree bullet icons */
+html.krull-dark .CategoryTreeEmptyBullet {
+  background-color: transparent !important;
+  color: #5a6577 !important;
+}
+
 /* --- Wiktionary-specific elements -------------------------------------
  * Wiktionary uses its own set of classes for collapsible nav headers,
  * inflection/declension table wrappers, term lists, and list-switcher
@@ -411,6 +475,20 @@ html.krull-dark .translations,
 html.krull-dark .translations-cell {
   background-color: #11151c !important;
   border-color: #1f2733 !important;
+}
+/* Wiktionary etymology tree diagram blocks (cream background) */
+html.krull-dark .etytree-block {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+}
+/* Wiktionary "needs translation check" banners (.checktrans) and the
+ * inline .ttbc markers that flag individual translations as unchecked */
+html.krull-dark .checktrans,
+html.krull-dark .ttbc {
+  background-color: #1c2230 !important;
+  color: #d4a574 !important;
+  border-color: #2a4a35 !important;
 }
 
 /* --- MediaWiki outer containers (Wikipedia/Wikivoyage/Wiktionary/
