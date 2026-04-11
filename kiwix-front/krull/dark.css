@@ -998,6 +998,20 @@ html.krull-dark ._attribution-license {
 html.krull-dark ._attribution a {
   color: #6fb3d2 !important;
 }
+/* DevDocs sidebar expand/collapse arrows (`<svg class="_list-arrow">`)
+ * The devdocs stylesheet sets them with `fill: var(--absolute)`
+ * which resolves to pure black on the default theme, plus
+ * `opacity: 0.4` — effectively invisible against our dark
+ * sidebar. Repaint as parchment gold at full opacity so each
+ * expandable category is clearly clickable. */
+html.krull-dark ._list-arrow {
+  fill: #d4a574 !important;
+  opacity: 0.85 !important;
+}
+html.krull-dark ._list-arrow:hover {
+  opacity: 1 !important;
+}
+
 /* DevDocs code / pre samples inside articles */
 html.krull-dark ._highlight,
 html.krull-dark ._pre-clip,

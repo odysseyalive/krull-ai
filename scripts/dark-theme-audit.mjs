@@ -176,6 +176,31 @@ async function auditDocument(frameOrPage) {
           rec("img-inline-bg", el, inline.substring(0, 60));
         }
       }
+
+      // 6. SVG icons with dark fill/stroke on the dark theme.
+      // The inverse of the other checks — here a DARK color is
+      // the problem because icons drawn in black/near-black
+      // disappear into the dark body. Covers devdocs sidebar
+      // arrows, Wikipedia external-link chevrons rendered as
+      // SVG, and any other <svg>/<use>/<path> that inherits
+      // fill from a stylesheet variable that didn't get
+      // re-themed. Threshold is the inverse of the bright one:
+      // anything darker than 60/255 average against a body
+      // background darker than 60/255 is essentially invisible.
+      if (el.tagName === "SVG" || el.tagName === "svg" ||
+          el.tagName === "PATH" || el.tagName === "path" ||
+          el.tagName === "USE" || el.tagName === "use") {
+        // SVG fill / stroke computed via getComputedStyle
+        const fill = parseColor(cs.fill);
+        const stroke = parseColor(cs.stroke);
+        const DARK_SVG_THRESHOLD = 60;
+        if (fill && fill[3] > 0.1 && brightness(fill) < DARK_SVG_THRESHOLD) {
+          rec("svg-dark-fill", el, "fill=" + cs.fill);
+        }
+        if (stroke && stroke[3] > 0.1 && brightness(stroke) < DARK_SVG_THRESHOLD) {
+          rec("svg-dark-stroke", el, "stroke=" + cs.stroke);
+        }
+      }
     }
 
     return findings;
