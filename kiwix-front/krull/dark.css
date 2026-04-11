@@ -1548,29 +1548,44 @@ html.krull-dark .krull-hero {
   text-align: center !important;
 }
 
-/* Watercolor banner: the Library of Alexandria interior. Fades
- * into the page background at the bottom via a gradient overlay
- * so the wordmark below reads as a continuation of the scene,
- * not a disconnected element. */
+/* Watercolor banner: the Library of Alexandria interior.
+ * Matches the krull-home Header component pattern
+ * (krull-home/src/components/Header.ts + globals.css) so the
+ * visual language is consistent across the whole Krull stack:
+ *
+ *   1. Painting is a CSS background-image on a 21:9 container
+ *   2. A ::before overlay with a radial + linear gradient
+ *      softens the hard rectangular edges of the painting into
+ *      the page background (#0b0e14) — cream watercolor paper
+ *      borders dissolve naturally without any pixel surgery
+ *
+ * The krull-home CSS uses `var(--bg)` which resolves to the
+ * same #0b0e14 we use here, so the gradients land on the exact
+ * page color. */
 html.krull-dark .krull-hero__banner {
   position: relative !important;
   width: 100% !important;
-  max-height: 360px !important;
+  aspect-ratio: 21 / 9 !important;
+  max-height: 440px !important;
+  background-image: url("/krull/library-hero.jpg") !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-color: #070a0f !important;
+  isolation: isolate !important;
   overflow: hidden !important;
-  margin-bottom: 32px !important;
+  margin: 0 0 24px !important;
 }
-html.krull-dark .krull-hero__image {
-  display: block !important;
-  width: 100% !important;
-  height: auto !important;
-  max-height: 360px !important;
-  object-fit: cover !important;
-  object-position: center center !important;
+html.krull-dark .krull-hero__banner::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background:
+    radial-gradient(120% 100% at 50% 40%, transparent 40%, #0b0e14 100%),
+    linear-gradient(180deg, transparent 55%, #0b0e14 100%) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
 }
-/* Note: no ::before / ::after gradient overlays here — the
- * four-side mask-image on .krull-hero__image handles the edge
- * fade into the page background directly, and layering an
- * opaque gradient on top would re-introduce a dark band. */
 html.krull-dark .krull-hero__mark {
   font-family: Georgia, "Times New Roman", serif !important;
   font-size: 56px !important;

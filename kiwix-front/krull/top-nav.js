@@ -55,16 +55,16 @@
     // Don't double-inject on hash changes or language switches.
     if (document.querySelector(".krull-hero")) return;
 
-    var banner = el("div", { "class": "krull-hero__banner" });
-    // The image is a pure decoration — hide from accessibility tree
-    // and let the serif wordmark below carry the library identity.
-    var img = el("img", {
-      src: "/krull/library-hero.jpg",
-      alt: "",
+    // The painting is applied as a CSS background on the banner
+    // div — matches the krull-home Header component which uses the
+    // same technique so the ::before overlay can softly fade the
+    // watercolor's cream paper edges into the page background.
+    // Hidden from accessibility tree: the serif wordmark below
+    // carries the library identity.
+    var banner = el("div", {
+      "class": "krull-hero__banner",
       "aria-hidden": "true",
-      "class": "krull-hero__image",
     });
-    banner.appendChild(img);
 
     var mark = el("div", {
       "class": "krull-hero__mark",
