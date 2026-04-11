@@ -380,10 +380,32 @@ html.krull-dark .thumb,
 html.krull-dark .thumbinner,
 html.krull-dark .thumbimage,
 html.krull-dark .multiimageinner,
-html.krull-dark .thumbinner.multiimageinner {
+html.krull-dark .thumbinner.multiimageinner,
+html.krull-dark img.mw-file-element {
   background-color: transparent !important;
   color: #e6edf3 !important;
   border-color: #1f2733 !important;
+}
+/* Inline-styled unclassed divs inside .thumbinner — some Wikipedia
+ * templates (e.g. location-map overlays on the Apollo 11 landing
+ * site) put an inline `background-color:#FFFFFF` on a wrapper div.
+ * Since it's inline but NOT !important, a CSS rule with !important
+ * still wins. Target unclassed divs directly inside .thumbinner. */
+html.krull-dark .thumbinner > div:not([class]) {
+  background-color: transparent !important;
+}
+
+/* Wikipedia gallery .whitebg modifier — Wikipedia's mod-gallery
+ * TemplateStyles inject a rule like
+ *   .mw-parser-output .mod-gallery .whitebg .thumb { background: #fff !important }
+ * which beats our html.krull-dark .thumb override on specificity +
+ * !important. Match the full selector path so our specificity is
+ * equal and our declaration (written later) wins. */
+html.krull-dark .mw-parser-output .mod-gallery .whitebg .thumb,
+html.krull-dark .mw-parser-output .whitebg .thumb,
+html.krull-dark .whitebg .thumb {
+  background-color: transparent !important;
+  background: transparent !important;
 }
 /* Syntax-highlighted code blocks from the SyntaxHighlight extension.
  * Matches all language variants (mw-highlight-lang-python, -go, -bash,
@@ -423,6 +445,56 @@ html.krull-dark .sistersitebox {
   background-color: #11151c !important;
   color: #e6edf3 !important;
   border: 1px solid #1f2733 !important;
+}
+/* Wikipedia .sidebar-list-title — headers in vertical sidebars
+ * (e.g. "Classification" in COVID-19), light green background. */
+html.krull-dark .sidebar-list-title,
+html.krull-dark .sidebar-title,
+html.krull-dark .sidebar-heading {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .sidebar,
+html.krull-dark .sidebar-list,
+html.krull-dark .sidebar-list-content,
+html.krull-dark .sidebar-content,
+html.krull-dark [class*="sidebar-"] {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+}
+/* Wikipedia colored table captions — .caption-purple, .caption-gray,
+ * etc. Various color-named caption classes ship with pastel backgrounds
+ * that need darking while keeping enough color to distinguish sections. */
+html.krull-dark caption[class*="caption-"],
+html.krull-dark .caption-purple,
+html.krull-dark .caption-gray,
+html.krull-dark .caption-blue,
+html.krull-dark .caption-green {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border-color: #1f2733 !important;
+}
+
+/* Wikipedia pull-quote boxes — .quotebox / .pullquote classes used
+ * in articles to call out memorable quotations. Light gray background. */
+html.krull-dark .quotebox,
+html.krull-dark .pullquote,
+html.krull-dark .quotebox-title,
+html.krull-dark .quotebox-quote {
+  background-color: #11151c !important;
+  color: #e6edf3 !important;
+  border-color: #1f2733 !important;
+  border-left: 4px solid #d4a574 !important;
+}
+
+/* Wikipedia broken-template divs: some articles have unrendered
+ * `{{{class}}}` template parameters that leak through as literal
+ * class names. Target the attribute value directly. */
+html.krull-dark div[class="{{{class}}}"],
+html.krull-dark div[class^="{{{"],
+html.krull-dark div[class*="{{{"] {
+  background-color: transparent !important;
 }
 /* Wikipedia CategoryTree bullet icons */
 html.krull-dark .CategoryTreeEmptyBullet {
