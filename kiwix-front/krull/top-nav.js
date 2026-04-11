@@ -45,13 +45,26 @@
   }
 
   // Render a branded hero section above the stock .kiwixNav on the
-  // welcome page: serif Krull wordmark + tagline. Gives the library
-  // an identity without disturbing the functional filter nav below.
+  // welcome page: a watercolor banner of the Library of Alexandria
+  // interior followed by the serif Krull wordmark + tagline. Gives
+  // the library an identity without disturbing the functional filter
+  // nav below.
   function renderWelcomeHero() {
     var nav = document.querySelector(".kiwixNav");
     if (!nav) return;
     // Don't double-inject on hash changes or language switches.
     if (document.querySelector(".krull-hero")) return;
+
+    var banner = el("div", { "class": "krull-hero__banner" });
+    // The image is a pure decoration — hide from accessibility tree
+    // and let the serif wordmark below carry the library identity.
+    var img = el("img", {
+      src: "/krull/library-hero.jpg",
+      alt: "",
+      "aria-hidden": "true",
+      "class": "krull-hero__image",
+    });
+    banner.appendChild(img);
 
     var mark = el("div", {
       "class": "krull-hero__mark",
@@ -61,7 +74,11 @@
       "class": "krull-hero__tagline",
       text: "an offline library",
     });
-    var hero = el("section", { "class": "krull-hero" }, [mark, tagline]);
+    var hero = el(
+      "section",
+      { "class": "krull-hero" },
+      [banner, mark, tagline]
+    );
     nav.parentNode.insertBefore(hero, nav);
   }
 

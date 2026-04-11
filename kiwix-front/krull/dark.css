@@ -1539,13 +1539,38 @@ html.krull-dark body > .kiwixfooter {
   padding-right: 32px !important;
 }
 
-/* Hero section — serif wordmark + tagline at the top of /. */
+/* Hero section — watercolor banner + serif wordmark + tagline
+ * at the top of the welcome page. */
 html.krull-dark .krull-hero {
-  max-width: 1200px !important;
-  margin: 64px auto 32px !important;
-  padding: 0 32px !important;
+  max-width: 1280px !important;
+  margin: 0 auto 24px !important;
+  padding: 0 !important;
   text-align: center !important;
 }
+
+/* Watercolor banner: the Library of Alexandria interior. Fades
+ * into the page background at the bottom via a gradient overlay
+ * so the wordmark below reads as a continuation of the scene,
+ * not a disconnected element. */
+html.krull-dark .krull-hero__banner {
+  position: relative !important;
+  width: 100% !important;
+  max-height: 360px !important;
+  overflow: hidden !important;
+  margin-bottom: 32px !important;
+}
+html.krull-dark .krull-hero__image {
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  max-height: 360px !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+}
+/* Note: no ::before / ::after gradient overlays here — the
+ * four-side mask-image on .krull-hero__image handles the edge
+ * fade into the page background directly, and layering an
+ * opaque gradient on top would re-introduce a dark band. */
 html.krull-dark .krull-hero__mark {
   font-family: Georgia, "Times New Roman", serif !important;
   font-size: 56px !important;
