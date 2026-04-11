@@ -258,6 +258,98 @@ html.krull-dark [class*="box-warning"] {
   border-color: #2a4a35 !important;
 }
 
+/* =====================================================================
+   Stack Exchange ZIMs (body.krull-zim-stackexchange)
+   =====================================================================
+   All 14 Stack Exchange ZIMs in the Krull library (Christianity,
+   Cooking, Unix, Buddhism, Gardening, etc.) share the same SE
+   frontend CSS, so one scoped rule set covers every one of them.
+   The body class is added by link-rewrite.js tagBodyBySource()
+   when the ZIM filename matches `*.stackexchange.com_*`.
+
+   Findings caught by the audit on christianity.stackexchange.com
+   /questions page and fixed here:
+   - .nav-links--link          — top nav category pills
+   - .post-tag                 — cream-yellow tag pills
+   - .question-summary         — question-row bottom divider
+   - .s-avatar.s-avatar__32    — default user avatar white backdrop
+   - .s-pagination--item       — page number button border */
+
+/* Main content column. SE uses `<div id="content" class="">` as
+ * the centered page body wrapper, with a white bg and light
+ * vertical dividers on both sides separating content from the
+ * left sidebar and the right rail. Dark all of it. */
+html.krull-dark body.krull-zim-stackexchange #content {
+  background-color: transparent !important;
+  border-color: #1f2733 !important;
+}
+
+html.krull-dark body.krull-zim-stackexchange .nav-links--link {
+  background-color: #11151c !important;
+  color: #8b96a8 !important;
+  border-color: #1f2733 !important;
+  border-radius: 4px !important;
+}
+html.krull-dark body.krull-zim-stackexchange .nav-links--link.youarehere,
+html.krull-dark body.krull-zim-stackexchange .nav-links--link.is-selected,
+html.krull-dark body.krull-zim-stackexchange .nav-links--link:hover {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border-color: #d4a574 !important;
+}
+
+/* `.post-tag` — tag pills (e.g. "catholicism", "biblical-basis")
+ * ship with a cream #FAEECP9 background and a mid-blue text
+ * color. Dark panel with parchment-gold text matches our
+ * other pill treatments. */
+html.krull-dark body.krull-zim-stackexchange .post-tag {
+  background-color: #161b25 !important;
+  color: #d4a574 !important;
+  border: 1px solid #2a3040 !important;
+  border-radius: 3px !important;
+}
+html.krull-dark body.krull-zim-stackexchange .post-tag:hover {
+  background-color: #1c2230 !important;
+  border-color: #d4a574 !important;
+}
+
+/* `.question-summary` rows have a bottom 1px divider that SE
+ * paints in #f1f2f3 (near-white). Darken it. */
+html.krull-dark body.krull-zim-stackexchange .question-summary {
+  border-bottom-color: #1f2733 !important;
+}
+
+/* `.s-avatar.s-avatar__32` default user avatar frame. SE
+ * generates deterministic colored-path patterns inside a
+ * white square for users without uploaded photos; those
+ * paths have their own fills (teal/purple/green) designed
+ * for a light backdrop but read fine on dark as-is. Just
+ * replace the white wrapper with a transparent dark panel
+ * so the colored shapes float on the page chrome instead
+ * of a hard white square. */
+html.krull-dark body.krull-zim-stackexchange .s-avatar.s-avatar__32 {
+  background-color: #11151c !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 3px !important;
+}
+html.krull-dark body.krull-zim-stackexchange div.s-avatar.s-avatar__32 {
+  background-color: #11151c !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 3px !important;
+}
+
+/* `.s-pagination--item` page number buttons. Selected state
+ * keeps the SE blue (data-viz — shows current page). Plain
+ * state gets a dark border instead of the light one. */
+html.krull-dark body.krull-zim-stackexchange .s-pagination--item:not(.is-selected) {
+  border-color: #1f2733 !important;
+  color: #8b96a8 !important;
+}
+html.krull-dark body.krull-zim-stackexchange .s-pagination--item:not(.is-selected):hover {
+  border-color: #d4a574 !important;
+  color: #d4a574 !important;
+}
+
 /* --- Gutenberg LCC skin (pure-skin-gutenberg) ----------------------- */
 /* Red header banner and red list stripes */
 html.krull-dark body > header,

@@ -177,28 +177,63 @@ async function auditDocument(frameOrPage) {
         }
       }
 
-      // 6. SVG icons with dark fill/stroke on the dark theme.
-      // The inverse of the other checks — here a DARK color is
-      // the problem because icons drawn in black/near-black
-      // disappear into the dark body. Covers devdocs sidebar
-      // arrows, Wikipedia external-link chevrons rendered as
-      // SVG, and any other <svg>/<use>/<path> that inherits
-      // fill from a stylesheet variable that didn't get
-      // re-themed. Threshold is the inverse of the bright one:
-      // anything darker than 60/255 average against a body
-      // background darker than 60/255 is essentially invisible.
-      if (el.tagName === "SVG" || el.tagName === "svg" ||
-          el.tagName === "PATH" || el.tagName === "path" ||
-          el.tagName === "USE" || el.tagName === "use") {
-        // SVG fill / stroke computed via getComputedStyle
-        const fill = parseColor(cs.fill);
-        const stroke = parseColor(cs.stroke);
-        const DARK_SVG_THRESHOLD = 60;
-        if (fill && fill[3] > 0.1 && brightness(fill) < DARK_SVG_THRESHOLD) {
-          rec("svg-dark-fill", el, "fill=" + cs.fill);
+      // 6. SVG drawing elements with dark fill/stroke on the
+      // dark theme. The inverse of the other checks — a dark
+      // color is the problem because icons drawn in black/near-
+      // black disappear into the dark body.
+      //
+      // Only check drawing elements (<path>, <circle>, <rect>,
+      // <polygon>, <ellipse>, <line>, <polyline>) — NOT the
+      // <svg> container or <use>/<g> wrappers. SE user avatars
+      // are a <svg> with child <path fill="#XXXXXX"> elements,
+      // each with its own explicit fill; the svg container's
+      // inherited default (black) never actually paints. If we
+      // checked the container, every such avatar would false-
+      // positive. Checking only drawing leaves catches paths
+      // that lack their own fill attribute and rely on the
+      // inherited dark default (the actual failure mode — e.g.
+      // the devdocs ._list-arrow <svg> with a <use> reference
+      // to a symbol whose fill cascades from the parent svg).
+      //
+      // We additionally skip drawing elements whose parent is
+      // a <use> reference target — those are template symbols,
+      // not rendered content.
+      const svgDrawTags = new Set([
+        "PATH", "path", "CIRCLE", "circle", "RECT", "rect",
+        "POLYGON", "polygon", "ELLIPSE", "ellipse",
+        "LINE", "line", "POLYLINE", "polyline",
+      ]);
+      if (svgDrawTags.has(el.tagName)) {
+        // Skip elements inside <symbol> (template definitions)
+        let inSymbol = false;
+        for (let cur = el.parentElement; cur; cur = cur.parentElement) {
+          if (cur.tagName === "SYMBOL" || cur.tagName === "symbol") {
+            inSymbol = true;
+            break;
+          }
         }
-        if (stroke && stroke[3] > 0.1 && brightness(stroke) < DARK_SVG_THRESHOLD) {
-          rec("svg-dark-stroke", el, "stroke=" + cs.stroke);
+        if (!inSymbol) {
+          // Only flag if the element has NO explicit fill/stroke
+          // attribute of its own — i.e. it's inheriting the
+          // (presumably dark) default from a parent that didn't
+          // get themed. Elements with their own explicit color
+          // attribute (SE avatars, data-viz shapes) are
+          // intentional and shouldn't be darked.
+          const hasOwnFill = el.hasAttribute("fill");
+          const hasOwnStroke = el.hasAttribute("stroke");
+          const DARK_SVG_THRESHOLD = 60;
+          if (!hasOwnFill) {
+            const fill = parseColor(cs.fill);
+            if (fill && fill[3] > 0.1 && brightness(fill) < DARK_SVG_THRESHOLD) {
+              rec("svg-dark-fill", el, "fill=" + cs.fill);
+            }
+          }
+          if (!hasOwnStroke) {
+            const stroke = parseColor(cs.stroke);
+            if (stroke && stroke[3] > 0.1 && brightness(stroke) < DARK_SVG_THRESHOLD) {
+              rec("svg-dark-stroke", el, "stroke=" + cs.stroke);
+            }
+          }
         }
       }
     }

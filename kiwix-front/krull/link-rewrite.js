@@ -205,6 +205,17 @@
     if (family) {
       document.body.classList.add("krull-zim-" + family);
     }
+    // Stack Exchange ZIMs all share the same frontend CSS and
+    // therefore the same fixable chrome patterns (nav pills,
+    // question-summary rows, .post-tag colors, .s-avatar frames,
+    // .s-pagination borders). Raw family comes back as
+    // "christianity.stackexchange.com" / "cooking.stackexchange.com"
+    // / etc. — selector-hostile because of the dots — so add a
+    // clean `krull-zim-stackexchange` sibling class that our CSS
+    // can target with a single rule set across all 14 SE ZIMs. */
+    if (/\.stackexchange\.com_/.test(zimName)) {
+      document.body.classList.add("krull-zim-stackexchange");
+    }
   }
 
   // ── Bootstrap ─────────────────────────────────────────────────────
