@@ -36,11 +36,33 @@
     return node;
   }
 
-  // Skip if kiwix's stock welcome chrome is already present —
-  // the presence of #kiwixSearchForm at DOM-ready time means we're
-  // on the library index. We don't want to double-inject.
-  function shouldSkip() {
+  // The welcome library index has its own .kiwixNav (filter + search)
+  // that search.js already hijacks — we don't want to stack a second
+  // search bar on top. Detect by the stock form id being present at
+  // DOM-ready time.
+  function isWelcomePage() {
     return !!document.getElementById("kiwixSearchForm");
+  }
+
+  // Render a branded hero section above the stock .kiwixNav on the
+  // welcome page: serif Krull wordmark + tagline. Gives the library
+  // an identity without disturbing the functional filter nav below.
+  function renderWelcomeHero() {
+    var nav = document.querySelector(".kiwixNav");
+    if (!nav) return;
+    // Don't double-inject on hash changes or language switches.
+    if (document.querySelector(".krull-hero")) return;
+
+    var mark = el("div", {
+      "class": "krull-hero__mark",
+      text: "Krull",
+    });
+    var tagline = el("div", {
+      "class": "krull-hero__tagline",
+      text: "an offline library",
+    });
+    var hero = el("section", { "class": "krull-hero" }, [mark, tagline]);
+    nav.parentNode.insertBefore(hero, nav);
   }
 
   function buildTopNav() {
@@ -197,7 +219,10 @@
   }
 
   function init() {
-    if (shouldSkip()) return;
+    if (isWelcomePage()) {
+      renderWelcomeHero();
+      return;
+    }
 
     var header = buildTopNav();
     var overlay = buildOverlay();
