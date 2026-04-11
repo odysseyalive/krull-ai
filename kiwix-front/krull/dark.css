@@ -879,10 +879,20 @@ html.krull-dark .krull-topnav {
   align-items: center !important;
   justify-content: space-between !important;
   height: 56px !important;
+  /* Override any `body > .kiwixNav` welcome-page rule (the
+   * top-nav shares the kiwixNav class so it can reuse the
+   * existing theme hooks) — reassert full-width + solid bg. */
+  max-width: none !important;
+  width: auto !important;
+  margin: 0 !important;
   padding: 0 24px !important;
   background-color: #11151c !important;
   border-bottom: 1px solid #1f2733 !important;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4) !important;
+  /* No box-shadow: the top-nav should feel continuous with
+   * kiwix's own #kiwixtoolbar that sits immediately below it
+   * on /viewer pages (same flat palette, single shared
+   * bottom divider). */
+  box-shadow: none !important;
   font-size: 14px !important;
 }
 
@@ -1186,8 +1196,12 @@ html.krull-dark body:has(> .results) .footer a:hover {
    then restyle every piece to use the parchment-gold dark palette. */
 
 /* Give the welcome page breathing room and a max width so the grid
- * doesn't stretch edge-to-edge on wide displays. */
-html.krull-dark body > .kiwixNav,
+ * doesn't stretch edge-to-edge on wide displays. The :not()
+ * excludes our .krull-topnav (which shares the .kiwixNav class for
+ * theme inheritance) from being clobbered with the welcome-page
+ * max-width/padding overrides — the top-nav should always render
+ * full-width and flush. */
+html.krull-dark body > .kiwixNav:not(.krull-topnav),
 html.krull-dark body > .kiwixHomeBody,
 html.krull-dark body > .kiwixfooter {
   max-width: 1200px !important;
@@ -1225,7 +1239,7 @@ html.krull-dark .krull-hero__tagline {
 /* Filter / search nav on the welcome page — more breathing room,
  * aligned flex layout, consistent control heights. The existing
  * .kiwixNav__select / .kiwixSearch / .kiwixButton theming stays. */
-html.krull-dark body > .kiwixNav {
+html.krull-dark body > .kiwixNav:not(.krull-topnav) {
   display: flex !important;
   align-items: center !important;
   gap: 12px !important;
