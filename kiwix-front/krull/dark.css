@@ -1238,6 +1238,7 @@ html.krull-dark body > .kiwixNav {
 html.krull-dark body > .kiwixNav .kiwixNav__filters {
   display: flex !important;
   gap: 12px !important;
+  margin: 0 !important;
 }
 html.krull-dark body > .kiwixNav #kiwixSearchForm {
   flex: 1 !important;
@@ -1330,10 +1331,36 @@ html.krull-dark .kiwixNav__kiwixFilter option {
   letter-spacing: normal !important;
   word-spacing: normal !important;
 }
+/* Feed link + UI language selector on the left of the nav row.
+ * The stock markup leaves them as bare <a>/<img> elements at 24px,
+ * which breaks alignment next to the 36px controls. Wrap each in
+ * a 36x36 icon button that matches the control-row styling, and
+ * shrink the inner <img> so it sits centered with comfortable
+ * padding. */
+html.krull-dark body > .kiwixNav #feedLink,
+html.krull-dark body > .kiwixNav a:has(#uiLanguageSelectorButton) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 36px !important;
+  height: 36px !important;
+  background-color: #161b25 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 4px !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  cursor: pointer !important;
+  transition: border-color 160ms ease !important;
+}
+html.krull-dark body > .kiwixNav #feedLink:hover,
+html.krull-dark body > .kiwixNav a:has(#uiLanguageSelectorButton):hover {
+  border-color: #d4a574 !important;
+}
 html.krull-dark body > .kiwixNav #feedLink img,
 html.krull-dark body > .kiwixNav #uiLanguageSelectorButton {
-  width: 24px !important;
-  height: 24px !important;
+  width: 18px !important;
+  height: 18px !important;
+  display: block !important;
 }
 
 /* "86 book(s)" result count → serif subtitle above the grid. */
