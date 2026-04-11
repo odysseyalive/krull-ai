@@ -456,6 +456,73 @@ html.krull-dark body.krull-zim-stackexchange .s-pagination--item:not(.is-selecte
   color: #d4a574 !important;
 }
 
+/* --- Question/answer detail page additions -------------------------
+ * These apply to the question detail template (not the questions
+ * list). Findings came from linguistics.stackexchange.com on a
+ * specific question URL. */
+
+/* `.bc-black-075` is SE's utility class for "black border at
+ * 7.5% opacity" — used as hairline dividers everywhere on detail
+ * pages. Our global body-level color overrides don't reach it
+ * because the SE CSS is more specific. Dark-theme it by replacing
+ * the border color on every element that uses this utility. */
+html.krull-dark body.krull-zim-stackexchange .bc-black-075 {
+  border-color: #1f2733 !important;
+}
+
+/* Answer row bottom divider. Each `.answer` card has a bottom
+ * border separating it from the next answer. */
+html.krull-dark body.krull-zim-stackexchange .answer {
+  border-bottom-color: #1f2733 !important;
+}
+
+/* Comment row dividers. `.comment-text` and `.comment-actions`
+ * get 1px bottom borders to separate comment rows. */
+html.krull-dark body.krull-zim-stackexchange .comment-text,
+html.krull-dark body.krull-zim-stackexchange .js-comment-text-and-form,
+html.krull-dark body.krull-zim-stackexchange .comment-actions,
+html.krull-dark body.krull-zim-stackexchange .js-comment-actions {
+  border-bottom-color: #1f2733 !important;
+}
+
+/* `.post-signature.owner` and `.comment-user.owner` — the light
+ * blue highlight boxes Stack Exchange paints around the original
+ * poster's answer signature and comment username. It's a
+ * data-viz cue ("this person asked the question") so we keep a
+ * color accent, but swap the light blue backdrop for a dark
+ * panel with parchment-gold text + left bar. */
+html.krull-dark body.krull-zim-stackexchange .post-signature.owner,
+html.krull-dark body.krull-zim-stackexchange .comment-user.owner {
+  background-color: #161b25 !important;
+  border-left: 3px solid #d4a574 !important;
+  padding-left: 6px !important;
+  color: #d4a574 !important;
+}
+
+/* --- Left sidebar SVG icons ----------------------------------------
+ * The SE left sidebar on question-detail pages uses
+ *   <img class="svg-icon iconHome" src="...Home.svg">
+ * to render small Home / Questions / Tags / Users / About icons
+ * next to each nav label. Because they're <img> elements with
+ * an external .svg src, CSS can't change their internal path
+ * colors directly — but it CAN apply a filter to the whole
+ * image. The icons are pure black, so we run them through a
+ * filter chain that inverts to white then tints toward
+ * parchment gold (#d4a574 ≈ rgb(212, 165, 116)). These filter
+ * numbers come from a standard CSS color-filter calculation. */
+html.krull-dark body.krull-zim-stackexchange img.svg-icon {
+  filter: brightness(0) saturate(100%) invert(73%) sepia(27%)
+          saturate(630%) hue-rotate(340deg) brightness(95%)
+          contrast(88%) !important;
+  opacity: 0.9 !important;
+  transition: opacity 160ms ease, filter 160ms ease !important;
+}
+html.krull-dark body.krull-zim-stackexchange .nav-links--link:hover img.svg-icon,
+html.krull-dark body.krull-zim-stackexchange .nav-links--link.youarehere img.svg-icon,
+html.krull-dark body.krull-zim-stackexchange .nav-links--link.is-selected img.svg-icon {
+  opacity: 1 !important;
+}
+
 /* --- Gutenberg LCC skin (pure-skin-gutenberg) ----------------------- */
 /* Red header banner and red list stripes */
 html.krull-dark body > header,

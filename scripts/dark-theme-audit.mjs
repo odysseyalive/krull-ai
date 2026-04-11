@@ -175,6 +175,28 @@ async function auditDocument(frameOrPage) {
         if (/background\s*(-color)?\s*:\s*#(f|e|d)/i.test(inline)) {
           rec("img-inline-bg", el, inline.substring(0, 60));
         }
+        // 5b. <img src="*.svg"> loading an SVG file whose
+        // internal paths we can't introspect from JS, but
+        // which is likely a monochrome icon designed for a
+        // light background. Heuristics:
+        //   - The img has a `svg-icon` / `icon-*` / `*-icon`
+        //     class (telltale of an icon component)
+        //   - No CSS `filter` applied that would rethme it
+        //     (filter: none means the raw pixels paint)
+        //   - Computed width and height are small (<= 48px)
+        //     — icon-sized, not a content illustration
+        // When all three hold, flag `img-svg-icon` so a human
+        // can decide whether to filter-invert it.
+        const src = el.getAttribute("src") || "";
+        const cls = typeof el.className === "string" ? el.className : "";
+        const w = parseFloat(cs.width);
+        const h = parseFloat(cs.height);
+        if (/\.svg(\?|$)/i.test(src) &&
+            /(^|\s)(svg-icon|icon-|[a-z]+-icon)/i.test(cls) &&
+            (cs.filter === "none" || !cs.filter) &&
+            w > 0 && w <= 48 && h > 0 && h <= 48) {
+          rec("img-svg-icon", el, "src=" + src.split("/").pop());
+        }
       }
 
       // 6. SVG drawing elements with dark fill/stroke on the
