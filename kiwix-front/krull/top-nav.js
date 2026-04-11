@@ -221,6 +221,17 @@
   }
 
   function init() {
+    // Skip entirely when we're inside an iframe. Kiwix's `/viewer`
+    // shell is a wrapper page that hosts the ZIM content in
+    // `#content_iframe`, and nginx's sub_filter injects our scripts
+    // into BOTH the shell AND every HTML response the iframe loads
+    // (including /skin/blank.html and every /content/ page). If we
+    // didn't guard, the shell gets one .krull-topnav and every
+    // iframed content page gets another — stacking two Krull
+    // headers. The shell's top bar is the one the user interacts
+    // with, so we keep that and skip iframed contexts.
+    if (window.self !== window.top) return;
+
     // Always mount the loading overlay, on every page — including
     // the welcome page. search.js looks it up by class to show it
     // during the submit→navigate window so the user sees purposeful
