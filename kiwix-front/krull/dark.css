@@ -259,6 +259,112 @@ html.krull-dark [class*="box-warning"] {
 }
 
 /* =====================================================================
+   Chosen.js select-dropdown library
+   =====================================================================
+   Chosen (https://harvesthq.github.io/chosen/) is a third-party
+   jQuery select replacement used across many ZIMs — TED (talk /
+   language selectors), some medical libraries, older Stack
+   Exchange snapshots. Its default skin is a white-to-grey
+   gradient pill with a white dropdown panel, and the CSS ships
+   with very specific selectors like `.chosen-container-single
+   .chosen-single` that out-specify our body-level overrides.
+   Dark the whole widget at the container level so any ZIM that
+   includes Chosen gets consistent theming for free. */
+
+/* Closed state — the pill the user clicks to open the dropdown. */
+html.krull-dark .chosen-container-single .chosen-single,
+html.krull-dark .chosen-container-single .chosen-single.chosen-default,
+html.krull-dark .chosen-single {
+  background-color: #161b25 !important;
+  background-image: none !important;
+  color: #d4a574 !important;
+  border: 1px solid #1f2733 !important;
+  box-shadow: none !important;
+}
+html.krull-dark .chosen-container-active .chosen-single,
+html.krull-dark .chosen-container-active.chosen-with-drop .chosen-single {
+  background-color: #1c2230 !important;
+  border-color: #d4a574 !important;
+}
+html.krull-dark .chosen-container-single .chosen-single span {
+  color: #d4a574 !important;
+}
+
+/* Down-arrow on the right edge of the pill. Chosen ships the
+ * arrow as a background-image sprite on a child <div><b></b>.
+ * Hide the sprite and replace with a pure-CSS parchment-gold
+ * chevron so it's visible on dark without loading an icon. */
+html.krull-dark .chosen-container-single .chosen-single div {
+  background: transparent !important;
+}
+html.krull-dark .chosen-container-single .chosen-single div b {
+  background: transparent !important;
+  position: relative !important;
+}
+html.krull-dark .chosen-container-single .chosen-single div b::after {
+  content: "▾" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  color: #d4a574 !important;
+  font-size: 11px !important;
+}
+
+/* Dropdown panel that appears when the pill is clicked. */
+html.krull-dark .chosen-container .chosen-drop,
+html.krull-dark .chosen-drop {
+  background-color: #11151c !important;
+  border: 1px solid #1f2733 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Search input inside the dropdown. Chosen's own CSS sets a
+ * white bg with a magnifier sprite as the background-image. We
+ * reclaim it with explicit dark styling and hide the sprite
+ * (the native dark input beside the panel border is enough
+ * visual cue). */
+html.krull-dark .chosen-container .chosen-search input[type="text"],
+html.krull-dark .chosen-container-single .chosen-search input[type="text"] {
+  background-color: #0b0e14 !important;
+  background-image: none !important;
+  color: #e6edf3 !important;
+  border: 1px solid #1f2733 !important;
+  border-radius: 3px !important;
+  padding: 4px 8px !important;
+}
+html.krull-dark .chosen-container .chosen-search input[type="text"]:focus {
+  border-color: #d4a574 !important;
+  outline: none !important;
+}
+
+/* Results list. Chosen's default is dark text (#444) on white
+ * bg — on our dark panel it becomes invisible. Override both. */
+html.krull-dark .chosen-container .chosen-results {
+  color: #e6edf3 !important;
+}
+html.krull-dark .chosen-container .chosen-results li {
+  color: #e6edf3 !important;
+  background-color: transparent !important;
+}
+html.krull-dark .chosen-container .chosen-results li.highlighted {
+  background-color: #161b25 !important;
+  background-image: none !important;
+  color: #d4a574 !important;
+}
+html.krull-dark .chosen-container .chosen-results li.no-results {
+  background-color: transparent !important;
+  color: #8b96a8 !important;
+  font-style: italic !important;
+}
+html.krull-dark .chosen-container .chosen-results li.group-result {
+  color: #8b96a8 !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  font-size: 11px !important;
+}
+
+/* =====================================================================
    Stack Exchange ZIMs (body.krull-zim-stackexchange)
    =====================================================================
    All 14 Stack Exchange ZIMs in the Krull library (Christianity,
