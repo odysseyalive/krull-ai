@@ -67,6 +67,7 @@ services:
     volumes:
       - ${HOME}:${HOME}:ro
       - ./proxy:/app
+      - ./logs:/app/logs
     environment:
       - OLLAMA_URL=http://krull-ollama:11434
       - SEARXNG_URL=http://krull-searxng:8080

@@ -62,6 +62,9 @@ map-viewer/style-*.json
 .claude/
 CLAUDE.md
 
+# Proxy session logs (written by sse_patch.py)
+logs/
+
 # Python bytecode caches
 __pycache__/
 *.pyc

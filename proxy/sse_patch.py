@@ -30,6 +30,61 @@ from fastapi.responses import StreamingResponse, Response
 
 app = FastAPI()
 
+# ── Structured File Logger ────────────────────────────────────────────────
+# Writes JSON Lines to /app/logs/proxy.jsonl (bind-mounted to ./logs/ on
+# the host). Each line has: timestamp, session_id, level, category, message,
+# and an optional data dict. Also prints to stderr for `docker logs`.
+
+LOG_DIR = Path(os.environ.get("KRULL_LOG_DIR", "/app/logs"))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+_log_file = open(LOG_DIR / "proxy.jsonl", "a", buffering=1)  # line-buffered
+
+# Current request's session ID — set per-request via contextvars
+import contextvars
+_current_session_id = contextvars.ContextVar("session_id", default="unknown")
+
+
+def proxy_log(category: str, message: str, *, level: str = "info",
+              data: dict | None = None):
+    """Write a structured log entry to both file and stderr."""
+    entry = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "sid": _current_session_id.get(),
+        "level": level,
+        "cat": category,
+        "msg": message,
+    }
+    if data:
+        entry["data"] = data
+    line = json.dumps(entry, default=str)
+    _log_file.write(line + "\n")
+    # Also print to stderr for docker logs (abbreviated)
+    print(f"[{category}] {message}", file=sys.stderr, flush=True)
+
+
+def get_session_id(request: Request) -> str:
+    """Extract session ID from request headers, session file, or generate one.
+
+    Priority: header > ~/.krull-session file > generated UUID.
+    The session file is written by krull-claude on startup and cleaned
+    up on exit. The host's $HOME is bind-mounted read-only into the
+    container at the same path.
+    """
+    sid = (request.headers.get("x-krull-session")
+           or request.headers.get("x-session-id"))
+    if sid:
+        return sid
+    # Try reading the session file written by krull-claude
+    host_home = os.environ.get("KRULL_HOST_HOME", "")
+    if host_home:
+        session_file = Path(host_home) / ".krull-session"
+        try:
+            return session_file.read_text().strip()
+        except (FileNotFoundError, PermissionError):
+            pass
+    return uuid.uuid4().hex[:12]
+
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://krull-ollama:11434")
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://krull-searxng:8080")
 KIWIX_URL = os.environ.get("KIWIX_URL", "http://krull-kiwix:8080")
@@ -112,9 +167,9 @@ def filter_tools(tools: list) -> list:
         if name in ALLOWED_TOOLS:
             filtered.append(tool)
     if len(filtered) != len(tools):
-        print(f"[PROXY] Filtered tools: {len(tools)} → {len(filtered)} "
-              f"({', '.join(ALLOWED_TOOLS & {t.get('function', t).get('name', t.get('name', '')) for t in filtered})})",
-              file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Filtered tools: {len(tools)} → {len(filtered)} "
+                  f"({', '.join(ALLOWED_TOOLS & {t.get('function', t).get('name', t.get('name', '')) for t in filtered})})",
+                  data={"from": len(tools), "to": len(filtered)})
     return filtered
 
 # Common parameter name mistakes → corrections
@@ -173,14 +228,14 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> str:
         stripped = {k: v for k, v in args.items() if k in valid}
         if len(stripped) != len(args):
             removed = set(args.keys()) - set(stripped.keys())
-            print(f"[PROXY] Stripped invalid params from {tool_name}: {removed}",
-                  file=sys.stderr, flush=True)
+            proxy_log("PROXY", f"Stripped invalid params from {tool_name}: {removed}",
+                      data={"tool": tool_name, "removed": list(removed)})
             args = stripped
             changed = True
 
     if changed:
-        print(f"[PROXY] Fixed tool params for {tool_name}: {list(args.keys())}",
-              file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Fixed tool params for {tool_name}: {list(args.keys())}",
+                  data={"tool": tool_name, "params": list(args.keys())})
         return json.dumps(args)
     return arguments if isinstance(arguments, str) else json.dumps(arguments)
 
@@ -261,7 +316,7 @@ def inject_shell_rules(messages: list) -> list:
     context message — model attention falls off sharply past the first
     few hundred chars of any individual message."""
     messages.insert(0, {"role": "system", "content": KRULL_SHELL_RULES})
-    print("[FILTER] +shell_rules", file=sys.stderr, flush=True)
+    proxy_log("FILTER", "+shell_rules")
     return messages
 
 
@@ -273,7 +328,7 @@ def inject_atomic_plan_rubric(messages: list) -> list:
     callout near the front of the stack, where the small model can
     actually attend to it."""
     messages.insert(0, {"role": "system", "content": KRULL_ATOMIC_PLAN_RUBRIC})
-    print("[FILTER] +atomic_plan_rubric", file=sys.stderr, flush=True)
+    proxy_log("FILTER", "+atomic_plan_rubric")
     return messages
 
 
@@ -574,12 +629,9 @@ def inject_slash_command_protocol(messages: list) -> list:
         return messages
     messages[last_user_idx] = new_msg
 
-    print(
-        f"[FILTER] {log_label} (/{skill_name}, shape={shape}, "
-        f"+{len(directive)} chars to user msg)",
-        file=sys.stderr,
-        flush=True,
-    )
+    proxy_log("FILTER", f"{log_label} (/{skill_name}, shape={shape}, "
+              f"+{len(directive)} chars to user msg)",
+              data={"skill": skill_name, "shape": shape, "chars": len(directive)})
     return messages
 
 
@@ -708,11 +760,8 @@ def inject_loop_break(messages: list) -> list:
         if m.get("role") == "system" and "[Krull Loop Break]" in _content_text(m.get("content", "")):
             return messages
     hint = LOOP_BREAK_HINT_TEMPLATE.format(tool_name=tool_name, count=count)
-    print(
-        f"[FILTER] +loop_break ({tool_name} × {count} → injecting reminder)",
-        file=sys.stderr,
-        flush=True,
-    )
+    proxy_log("FILTER", f"+loop_break ({tool_name} × {count} → injecting reminder)",
+              data={"tool": tool_name, "count": count})
     return _insert_after_system_messages(messages, hint)
 
 
@@ -875,11 +924,8 @@ def inject_data_starvation_warning(messages: list) -> list:
         total=total,
         failure_summary=summary_lines,
     )
-    print(
-        f"[FILTER] +data_starvation_warning ({failures}/{total} recent tool calls failed)",
-        file=sys.stderr,
-        flush=True,
-    )
+    proxy_log("FILTER", f"+data_starvation_warning ({failures}/{total} recent tool calls failed)",
+              level="warn", data={"failures": failures, "total": total})
     return _insert_after_system_messages(messages, hint)
 
 
@@ -963,11 +1009,8 @@ def inject_stalled_progress_warning(messages: list) -> list:
             return messages
 
     hint = STALLED_PROGRESS_HINT_TEMPLATE.format(count=count)
-    print(
-        f"[FILTER] +stalled_progress_warning ({count} consecutive tool turns without text answer)",
-        file=sys.stderr,
-        flush=True,
-    )
+    proxy_log("FILTER", f"+stalled_progress_warning ({count} consecutive tool turns without text answer)",
+              level="warn", data={"stalled_turns": count})
     return _insert_after_system_messages(messages, hint)
 
 
@@ -987,19 +1030,12 @@ def maybe_lock_to_planning(messages: list, tools: list | None) -> list | None:
     if not narrowed:
         # No planning tools available — can't lock. Leave tools alone
         # so the model at least has *something* to call.
-        print(
-            "[FILTER] planning_lock skipped: no planning tools in request",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("FILTER", "planning_lock skipped: no planning tools in request")
         return tools
     if len(narrowed) < len(tools):
-        print(
-            f"[FILTER] +planning_lock (narrowed {len(tools)}→{len(narrowed)} tools, "
-            f"slash-command query, no prior TaskCreate)",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("FILTER", f"+planning_lock (narrowed {len(tools)}→{len(narrowed)} tools, "
+                  f"slash-command query, no prior TaskCreate)",
+                  data={"from": len(tools), "to": len(narrowed)})
         return narrowed
     return tools
 
@@ -1059,13 +1095,13 @@ def inject_truth_guard(messages: list) -> list:
     nudge to the user message itself puts the reminder in the
     highest-attention position right before generation."""
     messages.insert(0, {"role": "system", "content": TRUTH_GUARD_CONTENT})
-    print("[FILTER] +truth_guard", file=sys.stderr, flush=True)
+    proxy_log("FILTER", "+truth_guard")
 
     idx, text = _last_user_text(messages)
     if idx is not None and any(p.search(text) for p in _TERSENESS_PATTERNS):
         messages[idx] = dict(messages[idx])
         messages[idx]["content"] = text + TRUTH_GUARD_TERSE_NUDGE
-        print("[FILTER] +truth_guard_terse_nudge", file=sys.stderr, flush=True)
+        proxy_log("FILTER", "+truth_guard_terse_nudge")
 
     return messages
 
@@ -1086,7 +1122,7 @@ def inject_date(messages: list) -> list:
             f"The date is {date_str}."
         ),
     })
-    print("[FILTER] +date", file=sys.stderr, flush=True)
+    proxy_log("FILTER", "+date")
     return messages
 
 
@@ -1148,7 +1184,7 @@ async def inject_web_search(messages: list) -> list:
         messages[-1]["content"] = "\n".join(lines) + f"\nUser question: {query}"
 
     except Exception as e:
-        print(f"[PROXY] Web search error: {e}", file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Web search error: {e}", level="error")
 
     return messages
 
@@ -1219,12 +1255,10 @@ async def _get_eng_book_names() -> list[str]:
                     continue
                 books.append(full_name)
             _KIWIX_ENG_BOOKS = books
-            print(
-                f"[PROXY] Kiwix catalog: {len(books)} eng-strict books cached",
-                file=sys.stderr, flush=True,
-            )
+            proxy_log("PROXY", f"Kiwix catalog: {len(books)} eng-strict books cached",
+                      data={"books": len(books)})
         except Exception as e:
-            print(f"[PROXY] Kiwix catalog error: {e}", file=sys.stderr, flush=True)
+            proxy_log("PROXY", f"Kiwix catalog error: {e}", level="error")
             _KIWIX_ENG_BOOKS = []
     return _KIWIX_ENG_BOOKS
 
@@ -1262,10 +1296,8 @@ async def inject_kiwix(messages: list) -> list:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(search_url)
             if resp.status_code != 200:
-                print(
-                    f"[FILTER] kiwix HTTP {resp.status_code} (url len={len(search_url)})",
-                    file=sys.stderr, flush=True,
-                )
+                proxy_log("FILTER", f"kiwix HTTP {resp.status_code} (url len={len(search_url)})",
+                          level="warn", data={"status": resp.status_code, "url_len": len(search_url)})
                 return messages
             xml_text = resp.text
 
@@ -1274,15 +1306,12 @@ async def inject_kiwix(messages: list) -> list:
         root = ET.fromstring(xml_text)
         channel = root.find("channel")
         if channel is None:
-            print("[FILTER] kiwix (no channel)", file=sys.stderr, flush=True)
+            proxy_log("FILTER", "kiwix (no channel)")
             return messages
 
         items = channel.findall("item")
         if not items:
-            print(
-                f"[FILTER] kiwix (0 items, query={query[:60]!r})",
-                file=sys.stderr, flush=True,
-            )
+            proxy_log("FILTER", f"kiwix (0 items, query={query[:60]!r})")
             return messages
 
         lines = ["[Offline Knowledge Base (Kiwix) — full-text search results]"]
@@ -1314,15 +1343,13 @@ async def inject_kiwix(messages: list) -> list:
         if len(lines) > 4:
             messages[-1] = dict(last)
             messages[-1]["content"] = "\n".join(lines) + f"\n{messages[-1]['content']}"
-            print(
-                f"[FILTER] +kiwix ({len(items)} results, {len(book_names)} books scoped)",
-                file=sys.stderr, flush=True,
-            )
+            proxy_log("FILTER", f"+kiwix ({len(items)} results, {len(book_names)} books scoped)",
+                      data={"results": len(items), "books": len(book_names)})
         else:
-            print("[FILTER] kiwix (no results)", file=sys.stderr, flush=True)
+            proxy_log("FILTER", "kiwix (no results)")
 
     except Exception as e:
-        print(f"[PROXY] Kiwix error: {e}", file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Kiwix error: {e}", level="error")
 
     return messages
 
@@ -1542,10 +1569,8 @@ async def inject_lang_docs(messages: list, has_tools: bool) -> list:
     # but puts the offline-docs guidance at the next-most-attended slot.
     content = "\n\n".join(parts)
     messages.insert(1, {"role": "system", "content": content})
-    print(
-        f"[FILTER] +lang_docs ({', '.join(fired)})",
-        file=sys.stderr, flush=True,
-    )
+    proxy_log("FILTER", f"+lang_docs ({', '.join(fired)})",
+              data={"langs": fired})
     return messages
 
 
@@ -1649,7 +1674,7 @@ async def inject_map_search(messages: list) -> list:
         messages[-1]["content"] = "\n".join(lines) + f"\nUser question: {query}"
 
     except Exception as e:
-        print(f"[PROXY] Map search error: {e}", file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Map search error: {e}", level="error")
 
     return messages
 
@@ -1717,76 +1742,250 @@ def truncate_large_tool_results(messages: list) -> list:
         truncated += 1
         saved_chars += dropped
     if truncated > 0:
-        print(
-            f"[FILTER] +tool_result_truncate ({truncated} results capped, "
-            f"{saved_chars} chars saved, cap={cap})",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("FILTER", f"+tool_result_truncate ({truncated} results capped, "
+                  f"{saved_chars} chars saved, cap={cap})",
+                  data={"truncated": truncated, "saved_chars": saved_chars, "cap": cap})
     return new_messages
 
 
-def compact_context(messages: list) -> list:
-    """Compact older messages when approaching the context window limit.
+def _est_tokens(text) -> int:
+    """Rough token estimate: ~4 chars per token."""
+    if isinstance(text, list):
+        return sum(_est_tokens(p.get("text", "") if isinstance(p, dict) else str(p)) for p in text)
+    return len(str(text or "")) // 4 + 1
 
-    Keeps system messages and recent conversation intact, summarizes
-    older conversation into a single system message.
+
+def _msg_tokens(msg: dict) -> int:
+    return _est_tokens(msg.get("content", "")) + 4
+
+
+def compact_context(messages: list) -> list:
+    """Compact older messages while preserving working state.
+
+    The goal is NOT to summarize the conversation — it's to let the model
+    pick up where it left off. We extract:
+      1. Task state (TaskCreate/TaskUpdate results → what's done, what's next)
+      2. The user's original request (first user message)
+      3. Key decisions and findings from assistant messages
+      4. Recent conversation (last N messages, kept verbatim)
+      5. Tool call history (what was tried, what worked/failed)
+
+    This prevents the infinite-loop problem where the model loses context
+    about what it was doing, rediscovers the same issue, and repeats.
     """
     max_ctx = int(os.environ.get("CONTEXT_COMPACT_LIMIT", str(NUM_CTX)))
     threshold = int(max_ctx * 0.75)
-    preserve_recent = 6  # message pairs
 
-    # Estimate tokens (~4 chars per token)
-    total_tokens = sum(
-        len(m.get("content", "") if isinstance(m.get("content", ""), str) else str(m.get("content", ""))) // 4 + 4
-        for m in messages
-    )
+    total_tokens = sum(_msg_tokens(m) for m in messages)
 
     if total_tokens <= threshold:
+        proxy_log("PROXY", f"Context check: ~{total_tokens} tokens "
+                  f"(threshold {threshold}, headroom {threshold - total_tokens})",
+                  data={"est_tokens": total_tokens, "threshold": threshold,
+                        "headroom": threshold - total_tokens, "msgs": len(messages)})
         return messages
 
     system_messages = [m for m in messages if m.get("role") == "system"]
     conversation = [m for m in messages if m.get("role") != "system"]
 
-    preserve_count = min(preserve_recent * 2, len(conversation))
-    if preserve_count >= len(conversation):
+    if len(conversation) <= 16:
+        # Too few messages to compact meaningfully
         return messages
 
-    old_messages = conversation[:-preserve_count]
-    recent_messages = conversation[-preserve_count:]
+    # ── Budget: how many tokens can the summary use? ──────────────────
+    system_tokens = sum(_msg_tokens(m) for m in system_messages)
+    # Reserve 40% of remaining budget for recent messages, 60% for summary
+    remaining_budget = threshold - system_tokens
+    recent_budget = int(remaining_budget * 0.4)
+    summary_budget = int(remaining_budget * 0.55)  # leave 5% margin
 
-    summary_parts = []
+    # ── Preserve recent conversation (as many messages as fit) ────────
+    recent_messages = []
+    recent_tokens = 0
+    for msg in reversed(conversation):
+        mt = _msg_tokens(msg)
+        if recent_tokens + mt > recent_budget:
+            break
+        recent_messages.insert(0, msg)
+        recent_tokens += mt
+
+    # Ensure at least the last 8 messages are kept
+    if len(recent_messages) < 8:
+        recent_messages = conversation[-8:]
+        recent_tokens = sum(_msg_tokens(m) for m in recent_messages)
+
+    old_messages = conversation[:len(conversation) - len(recent_messages)]
+    if not old_messages:
+        return messages
+
+    # ── Extract structured state from old messages ────────────────────
+
+    # 1. The user's original request (first user message)
+    original_request = ""
     for msg in old_messages:
-        role = msg.get("role", "unknown")
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    p.get("text", "") for p in content if isinstance(p, dict)
+                )
+            content = str(content or "")
+            # Skip tool results masquerading as user messages
+            if content and not content.startswith("{") and len(content) > 20:
+                original_request = content[:1000]
+                break
+
+    # 2. Task state — extract from tool calls and results
+    tasks_found = []
+    for msg in old_messages:
+        tc_list = msg.get("tool_calls", [])
+        for tc in tc_list:
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            if name in ("TaskCreate", "TaskUpdate"):
+                try:
+                    args = func.get("arguments", "{}")
+                    if isinstance(args, str):
+                        args = json.loads(args)
+                    tasks_found.append({"action": name, **args})
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+    # 3. Key decisions — assistant messages that contain findings/conclusions
+    #    (not just tool calls)
+    decisions = []
+    for msg in old_messages:
+        if msg.get("role") != "assistant":
+            continue
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-        if content:
-            if len(content) > 300:
-                content = content[:300] + "..."
-            summary_parts.append(f"[{role}]: {content}")
+            content = " ".join(
+                p.get("text", "") for p in content if isinstance(p, dict)
+            )
+        content = str(content or "").strip()
+        # Skip empty or very short assistant messages (tool-call-only turns)
+        if len(content) < 50:
+            continue
+        # Keep a truncated version of substantive assistant messages
+        decisions.append(content[:500])
 
-    if not summary_parts:
-        return messages
+    # 4. Tool call history — what was tried (name + brief args)
+    tool_history = []
+    for msg in old_messages:
+        for tc in msg.get("tool_calls", []):
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            if name in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList"):
+                continue  # already captured in task state
+            try:
+                args = func.get("arguments", "{}")
+                if isinstance(args, str):
+                    args = json.loads(args)
+                # Brief summary of what was called
+                if name == "Read":
+                    tool_history.append(f"Read({args.get('file_path', '?')})")
+                elif name == "Edit":
+                    tool_history.append(f"Edit({args.get('file_path', '?')})")
+                elif name == "Write":
+                    tool_history.append(f"Write({args.get('file_path', '?')})")
+                elif name == "Bash":
+                    cmd = args.get("command", "")[:100]
+                    tool_history.append(f"Bash({cmd})")
+                elif name == "Grep":
+                    tool_history.append(f"Grep({args.get('pattern', '?')})")
+                elif name == "Glob":
+                    tool_history.append(f"Glob({args.get('pattern', '?')})")
+                elif name == "Skill":
+                    tool_history.append(f"Skill({args.get('skill', '?')})")
+                else:
+                    tool_history.append(f"{name}(...)")
+            except (json.JSONDecodeError, TypeError):
+                tool_history.append(f"{name}(...)")
 
-    compact_msg = {
-        "role": "system",
-        "content": (
-            "[Context Manager: Earlier conversation compacted to fit context window.]\n\n"
-            f"=== Earlier Conversation Summary ===\n" + "\n".join(summary_parts) +
-            "\n=== End Summary ===\n\n"
-            "Continue the conversation naturally based on this context."
-        ),
-    }
+    # 5. Tool results that indicate errors (preserve these fully)
+    errors_encountered = []
+    for msg in old_messages:
+        if msg.get("role") == "tool":
+            content = str(msg.get("content", ""))
+            if any(w in content.lower() for w in ("error", "failed", "exception",
+                                                    "denied", "not found", "traceback")):
+                errors_encountered.append(content[:300])
+
+    # ── Build the summary message ─────────────────────────────────────
+    parts = ["[Context Manager: Earlier conversation compacted to fit context window.]\n"]
+
+    parts.append("=== WHAT YOU WERE DOING ===")
+    if original_request:
+        parts.append(f"Original user request:\n{original_request}\n")
+
+    if tasks_found:
+        parts.append("Task state from earlier in conversation:")
+        for t in tasks_found[-20:]:  # last 20 task operations
+            parts.append(f"  - {t.get('action')}: {json.dumps({k: v for k, v in t.items() if k != 'action'})}")
+        parts.append("")
+
+    if decisions:
+        parts.append("=== KEY FINDINGS & DECISIONS ===")
+        # Keep the most recent decisions (they're most relevant)
+        for d in decisions[-5:]:
+            parts.append(f"{d}\n")
+
+    if tool_history:
+        parts.append("=== TOOLS ALREADY USED ===")
+        # Deduplicate consecutive identical calls
+        deduped = []
+        for t in tool_history:
+            if not deduped or deduped[-1] != t:
+                deduped.append(t)
+        parts.append(", ".join(deduped[-30:]))  # last 30 unique calls
+        parts.append("")
+
+    if errors_encountered:
+        parts.append("=== ERRORS ENCOUNTERED ===")
+        for e in errors_encountered[-5:]:
+            parts.append(f"  - {e}")
+        parts.append("")
+
+    parts.append("=== INSTRUCTIONS ===")
+    parts.append("Continue from where you left off. Do NOT restart or re-investigate "
+                 "issues already resolved above. If tasks are listed, check their "
+                 "status and continue with the next incomplete task.")
+
+    summary_content = "\n".join(parts)
+
+    # Trim summary if it exceeds budget
+    if _est_tokens(summary_content) > summary_budget:
+        # Progressively trim: tool history first, then decisions, then errors
+        while _est_tokens(summary_content) > summary_budget and tool_history:
+            tool_history = tool_history[len(tool_history) // 2:]
+            parts_rebuild = [p for p in parts if not p.startswith("=== TOOLS")]
+            if tool_history:
+                idx = next((i for i, p in enumerate(parts_rebuild) if "ERRORS" in p or "INSTRUCTIONS" in p), len(parts_rebuild))
+                parts_rebuild.insert(idx, "=== TOOLS ALREADY USED ===")
+                parts_rebuild.insert(idx + 1, ", ".join(tool_history[-15:]))
+                parts_rebuild.insert(idx + 2, "")
+            summary_content = "\n".join(parts_rebuild)
+
+        # Last resort: hard truncate
+        max_chars = summary_budget * 4
+        if len(summary_content) > max_chars:
+            summary_content = summary_content[:max_chars] + "\n[...truncated]"
+
+    compact_msg = {"role": "system", "content": summary_content}
 
     compacted = system_messages + [compact_msg] + recent_messages
-    new_tokens = sum(
-        len(m.get("content", "") if isinstance(m.get("content", ""), str) else "") // 4 + 4
-        for m in compacted
-    )
-    print(f"[PROXY] Context compacted: {total_tokens} → {new_tokens} est. tokens "
-          f"({len(old_messages)} msgs summarized, {len(recent_messages)} kept)",
-          file=sys.stderr, flush=True)
+    new_tokens = sum(_msg_tokens(m) for m in compacted)
+
+    proxy_log("PROXY", f"Context compacted: {total_tokens} → {new_tokens} est. tokens "
+              f"({len(old_messages)} msgs summarized, {len(recent_messages)} kept, "
+              f"tasks={len(tasks_found)} decisions={len(decisions)} "
+              f"tools={len(tool_history)} errors={len(errors_encountered)})",
+              level="warn",
+              data={"from_tokens": total_tokens, "to_tokens": new_tokens,
+                    "summarized": len(old_messages), "kept": len(recent_messages),
+                    "tasks": len(tasks_found), "decisions": len(decisions),
+                    "tool_history": len(tool_history),
+                    "errors": len(errors_encountered)})
     return compacted
 
 
@@ -1987,19 +2186,12 @@ def extract_cwd_from_messages(messages: list) -> str | None:
         if isinstance(c, list):
             c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
         snippet = (c or "")[:600].replace("\n", "\\n")
-        print(
-            f"[CONTEXT-DEBUG] cwd parse failed; system_msgs={len(sys_msgs)} "
-            f"first_snippet={snippet!r}",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("CONTEXT", f"cwd parse failed; system_msgs={len(sys_msgs)} "
+                  f"first_snippet={snippet!r}", level="warn")
     else:
-        print(
-            f"[CONTEXT-DEBUG] cwd parse failed; no system messages "
-            f"(total_msgs={len(messages)}, roles={[m.get('role') for m in messages[:5]]})",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("CONTEXT", f"cwd parse failed; no system messages "
+                  f"(total_msgs={len(messages)}, roles={[m.get('role') for m in messages[:5]]})",
+                  level="warn")
     return None
 
 
@@ -2272,13 +2464,11 @@ def get_project_context(cwd: str) -> ProjectContext:
     if pc is None:
         pc = ProjectContext(cwd)
         PROJECT_CACHE[cwd] = pc
-        print(
-            f"[CONTEXT] cwd={cwd} project_root={pc.project_root} "
-            f"skills={len(pc.skills)} ({','.join(s['name'] for s in pc.skills[:8])}"
-            f"{'…' if len(pc.skills) > 8 else ''})",
-            file=sys.stderr,
-            flush=True,
-        )
+        proxy_log("CONTEXT", f"cwd={cwd} project_root={pc.project_root} "
+                  f"skills={len(pc.skills)} ({','.join(s['name'] for s in pc.skills[:8])}"
+                  f"{'…' if len(pc.skills) > 8 else ''})",
+                  data={"cwd": cwd, "project_root": pc.project_root,
+                        "skills": [s["name"] for s in pc.skills]})
     return pc
 
 
@@ -2325,7 +2515,8 @@ def inject_project_context(messages: list) -> list:
         if m.get("role") == "system" and "[Krull Project Context]" in _content_text(m.get("content", "")):
             return messages
 
-    print(f"[FILTER] +project_context ({mode}, {len(body)} chars)", file=sys.stderr, flush=True)
+    proxy_log("FILTER", f"+project_context ({mode}, {len(body)} chars)",
+              data={"mode": mode, "chars": len(body)})
     return _insert_after_system_messages(messages, body)
 
 
@@ -2427,7 +2618,7 @@ async def apply_filters(
         # Inject tool usage guidance so the model uses correct parameter names.
         # KEEP THIS AT POSITION 0 — see apply_filters docstring.
         messages.insert(0, {"role": "system", "content": TOOL_GUIDANCE})
-        print("[FILTER] +tool_guidance", file=sys.stderr, flush=True)
+        proxy_log("FILTER", "+tool_guidance")
         # Language-aware Kiwix devdocs hint. Inserts at position 1 so it
         # sits right behind TOOL_GUIDANCE without dislodging the tool-use
         # anchor. Only fires when a language signal is detected in the
@@ -2589,8 +2780,7 @@ def responses_input_to_messages(input_items):
             # Restore cached arguments if LiteLLM stripped them
             if args in ("{}", "", "null") and call_id in _tool_call_cache:
                 args = _tool_call_cache[call_id]
-                print(f"[PROXY] Restored cached args for {call_id}: {args[:100]}",
-                      file=sys.stderr, flush=True)
+                proxy_log("PROXY", f"Restored cached args for {call_id}: {args[:100]}")
             # Check if we can merge with the previous assistant message
             if messages and messages[-1].get("role") == "assistant" and "tool_calls" in messages[-1]:
                 messages[-1]["tool_calls"].append({
@@ -2917,6 +3107,10 @@ def patch_usage_fields(event: dict) -> dict:
 async def proxy(request: Request, path: str):
     is_responses = (path == "responses" and request.method == "POST")
 
+    # Set session ID for this request's log entries
+    session_id = get_session_id(request)
+    _current_session_id.set(session_id)
+
     headers = dict(request.headers)
     headers.pop("host", None)
     headers.pop("content-length", None)
@@ -2933,7 +3127,7 @@ async def proxy(request: Request, path: str):
         for i, item in enumerate(resp_data.get("input", [])):
             itype = item.get("type", "?") if isinstance(item, dict) else "string"
             if itype in ("function_call", "function_call_output"):
-                print(f"[PROXY] Input[{i}] type={itype}: {json.dumps(item)[:500]}", file=sys.stderr, flush=True)
+                proxy_log("PROXY", f"Input[{i}] type={itype}: {json.dumps(item)[:500]}")
 
         is_streaming = resp_data.get("stream", False)
         original_model = resp_data.get("model", "")
@@ -2966,21 +3160,21 @@ async def proxy(request: Request, path: str):
         elevated_temp = compute_session_temperature(chat_body["messages"])
         if elevated_temp > 0:
             chat_body["temperature"] = elevated_temp
-            print(
-                f"[FILTER] +temp_escalation (loop detected, temp={elevated_temp})",
-                file=sys.stderr,
-                flush=True,
-            )
+            proxy_log("FILTER", f"+temp_escalation (loop detected, temp={elevated_temp})",
+                      data={"temp": elevated_temp})
 
         # Convert to Ollama native format (supports options.num_ctx)
         ollama_body = chat_to_ollama_request(chat_body)
         upstream = f"{OLLAMA_URL}/api/chat"
 
-        print(f"[PROXY] Responses API → Ollama (stream={is_streaming} model={original_model} "
-              f"msgs={len(chat_body['messages'])} tools={len(chat_body.get('tools', []))} "
-              f"ctx={NUM_CTX} temp={ollama_body['options'].get('temperature')} "
-              f"top_p={ollama_body['options'].get('top_p')})",
-              file=sys.stderr, flush=True)
+        proxy_log("PROXY", f"Responses API → Ollama (stream={is_streaming} model={original_model} "
+                  f"msgs={len(chat_body['messages'])} tools={len(chat_body.get('tools', []))})",
+                  data={"stream": is_streaming, "model": original_model,
+                        "msgs": len(chat_body["messages"]),
+                        "tools": len(chat_body.get("tools", [])),
+                        "ctx": NUM_CTX,
+                        "temp": ollama_body["options"].get("temperature"),
+                        "top_p": ollama_body["options"].get("top_p")})
 
         # TEMPORARY FORENSIC: dump every message's role + length + start/end
         # snippet so we can see exactly what the model is being given when
@@ -3016,10 +3210,10 @@ async def proxy(request: Request, path: str):
             content_len = len(str(m.get("content", "")))
             extra = f" tool_calls={len(tc)}" if tc else ""
             if role in ("assistant", "tool") or tc:
-                print(f"[PROXY]   msg[{i}] role={role} content_len={content_len}{extra}", file=sys.stderr, flush=True)
+                proxy_log("PROXY", f"  msg[{i}] role={role} content_len={content_len}{extra}")
                 if tc:
                     for t in tc:
-                        print(f"[PROXY]     tc: {json.dumps(t)[:300]}", file=sys.stderr, flush=True)
+                        proxy_log("PROXY", f"    tc: {json.dumps(t)[:300]}")
 
         if is_streaming:
             ollama_body["stream"] = True
@@ -3030,7 +3224,7 @@ async def proxy(request: Request, path: str):
                 if resp.status_code >= 400:
                     error_body = await resp.aread()
                     await client.aclose()
-                    print(f"[PROXY] Ollama error: {resp.status_code} {error_body[:300]}", file=sys.stderr, flush=True)
+                    proxy_log("PROXY", f"Ollama error: {resp.status_code} {error_body[:300]}", level="error")
                     return Response(content=error_body, status_code=resp.status_code, media_type="application/json")
             except Exception as e:
                 await client.aclose()
@@ -3070,21 +3264,16 @@ async def proxy(request: Request, path: str):
                                 if msg.get("tool_calls"):
                                     tool_calls_total += len(msg["tool_calls"])
                                 if done:
-                                    print(
-                                        f"[STREAM] done content_chars={content_chars_total} "
-                                        f"tool_calls={tool_calls_total} "
-                                        f"prompt_tokens={ollama_chunk.get('prompt_eval_count', 0)} "
-                                        f"completion_tokens={ollama_chunk.get('eval_count', 0)}",
-                                        file=sys.stderr,
-                                        flush=True,
-                                    )
+                                    proxy_log("STREAM", f"done content_chars={content_chars_total} "
+                                              f"tool_calls={tool_calls_total}",
+                                              data={"content_chars": content_chars_total,
+                                                    "tool_calls": tool_calls_total,
+                                                    "prompt_tokens": ollama_chunk.get("prompt_eval_count", 0),
+                                                    "completion_tokens": ollama_chunk.get("eval_count", 0)})
                                     if content_chars_total == 0 and tool_calls_total == 0:
-                                        print(
-                                            f"[STREAM] EMPTY OUTPUT — last ollama chunk: "
-                                            f"{json.dumps(ollama_chunk)[:500]}",
-                                            file=sys.stderr,
-                                            flush=True,
-                                        )
+                                        proxy_log("STREAM", f"EMPTY OUTPUT — last ollama chunk: "
+                                                  f"{json.dumps(ollama_chunk)[:500]}",
+                                                  level="warn")
                                 chat_chunk = {
                                     "choices": [{
                                         "index": 0,
@@ -3115,7 +3304,7 @@ async def proxy(request: Request, path: str):
                                         })
                                         tc_counter += 1
                                     chat_chunk["choices"][0]["delta"]["tool_calls"] = tc_deltas
-                                    print(f"[PROXY] Tool call: {json.dumps(tc_deltas)[:500]}", file=sys.stderr, flush=True)
+                                    proxy_log("PROXY", f"Tool call: {json.dumps(tc_deltas)[:500]}")
                                 if done:
                                     chat_chunk["choices"][0]["finish_reason"] = "tool_calls" if msg.get("tool_calls") else "stop"
                                     chat_chunk["usage"] = {
@@ -3139,7 +3328,7 @@ async def proxy(request: Request, path: str):
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(upstream, json=ollama_body)
                 if resp.status_code >= 400:
-                    print(f"[PROXY] Ollama error: {resp.status_code} {resp.content[:300]}", file=sys.stderr, flush=True)
+                    proxy_log("PROXY", f"Ollama error: {resp.status_code} {resp.content[:300]}", level="error")
                     return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
                 try:
                     ollama_resp = resp.json()
@@ -3149,7 +3338,7 @@ async def proxy(request: Request, path: str):
                         status_code=200, media_type="application/json",
                     )
                 except Exception as e:
-                    print(f"[PROXY] Translation error: {e}", file=sys.stderr, flush=True)
+                    proxy_log("PROXY", f"Translation error: {e}", level="error")
                     return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
 
     # ── Chat Completions passthrough (apply filters, use native Ollama API) ──
@@ -3175,11 +3364,7 @@ async def proxy(request: Request, path: str):
             elevated_temp = compute_session_temperature(data["messages"])
             if elevated_temp > 0:
                 data["temperature"] = elevated_temp
-                print(
-                    f"[FILTER] +temp_escalation (loop detected, temp={elevated_temp})",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                proxy_log("FILTER", f"+temp_escalation (loop detected, temp={elevated_temp})")
 
             ollama_body = chat_to_ollama_request(data)
             upstream = f"{OLLAMA_URL}/api/chat"
@@ -3249,7 +3434,7 @@ async def proxy(request: Request, path: str):
                     return Response(content=json.dumps(chat_resp).encode(), status_code=200, media_type="application/json")
 
         except Exception as e:
-            print(f"[PROXY] Chat completions error: {e}", file=sys.stderr, flush=True)
+            proxy_log("PROXY", f"Chat completions error: {e}", level="error")
             return Response(content=json.dumps({"error": str(e)}).encode(), status_code=500)
 
     # ── Generic passthrough ───────────────────────────────────────────
@@ -3257,7 +3442,7 @@ async def proxy(request: Request, path: str):
     if request.url.query:
         upstream += f"?{request.url.query}"
 
-    print(f"[PROXY] Passthrough {request.method} /{path} -> {upstream}", file=sys.stderr, flush=True)
+    proxy_log("PROXY", f"Passthrough {request.method} /{path} -> {upstream}")
 
     if request.method == "HEAD":
         async with httpx.AsyncClient(timeout=30.0) as client:

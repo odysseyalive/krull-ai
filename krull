@@ -15,6 +15,7 @@ usage() {
     echo "  download-wikipedia <pkg> Download Wikipedia ZIM files (mini|nopic|medicine|full)"
     echo "  download-knowledge <pkg> Download dev docs, Stack Exchange, and more"
     echo "  download-maps <region>   Download OpenStreetMap tiles for offline maps"
+    echo "  logs <subcommand>        View and search SSE proxy session logs"
     echo ""
     echo "Examples:"
     echo "  ./krull start"
