@@ -789,7 +789,8 @@ def compute_session_temperature(messages: list) -> float:
             return 0.4
         return 0.2
 
-    stalled = count_consecutive_tool_turns(messages)
+    stats = count_tool_call_stats(messages)
+    stalled = stats["consecutive"]
     if stalled >= KRULL_STALLED_PROGRESS_THRESHOLD:
         # Escalate proportionally to how stuck the workflow is
         if stalled >= KRULL_STALLED_PROGRESS_THRESHOLD + 6:  # ≥18
@@ -929,89 +930,178 @@ def inject_data_starvation_warning(messages: list) -> list:
     return _insert_after_system_messages(messages, hint)
 
 
-# Stalled progress detection (task #23). The loop detector catches
-# "same tool N times in a row" but misses spelunking loops where the
-# model alternates between tools (Read, Grep, Read, Grep, Read, ...)
-# at random offsets/patterns hoping to find content that isn't where
-# it's looking. The data starvation detector misses it too because
-# the tool results are technically "successful" — Reads return real
-# content, Greps return real matches, just nothing relevant to the
-# task. The model keeps grinding because every individual call looks
-# productive even though the workflow as a whole is stuck.
+# Stalled progress detection (task #23, revised for filler-text evasion).
 #
-# Detection: count consecutive assistant tool-call turns since the
-# last "pure text" assistant response. If too many in a row, the
-# model is exploring without converging and we intervene.
+# The original detector counted consecutive tool-call assistant turns,
+# resetting when any assistant message had >100 chars of text without
+# tool_calls. This missed a common pattern: the model emits short filler
+# text ("Let me look up these words...") between tool-call batches,
+# which resets the counter even though the model isn't actually answering.
+#
+# The new approach uses a WINDOWED RATIO: look at the last N assistant
+# messages and count what fraction are tool-call turns. If the ratio is
+# too high, the model is grinding. A single "real answer" (>500 chars,
+# no tool_calls) still resets, but filler doesn't.
+
+# Hard cap: after this many TOTAL tool-call assistant turns in the
+# conversation, strip tools entirely and force a text response.
+KRULL_TOOL_CALL_HARD_CAP = int(
+    os.environ.get("KRULL_TOOL_CALL_HARD_CAP", "30")
+)
 
 
-def count_consecutive_tool_turns(messages: list) -> int:
-    """Count how many recent assistant messages were tool-call turns
-    (had tool_calls). A 'pure text' assistant response (no tool_calls,
-    significant content) resets the counter — that's the model
-    actually answering the user. Walks backward from the end."""
-    count = 0
-    for m in reversed(messages):
-        if m.get("role") != "assistant":
-            continue
+def count_tool_call_stats(messages: list) -> dict:
+    """Analyze tool-call patterns across assistant messages.
+
+    Returns:
+        total_tool_turns: total assistant messages with tool_calls
+        total_text_turns: total assistant messages without tool_calls
+        window_tool_turns: tool-call turns in the last WINDOW messages
+        window_size: how many assistant messages were in the window
+        consecutive: consecutive tool-call turns from the end (legacy)
+    """
+    WINDOW = 20  # look at last 20 assistant messages
+
+    assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+
+    total_tool = 0
+    total_text = 0
+    for m in assistant_msgs:
+        if m.get("tool_calls"):
+            total_tool += 1
+        else:
+            total_text += 1
+
+    # Windowed analysis
+    window = assistant_msgs[-WINDOW:] if len(assistant_msgs) > WINDOW else assistant_msgs
+    window_tool = 0
+    for m in window:
+        if m.get("tool_calls"):
+            window_tool += 1
+
+    # Consecutive from end (but filler-resistant: only a REAL answer
+    # of >500 chars with no tool_calls resets the counter)
+    consecutive = 0
+    for m in reversed(assistant_msgs):
         tcs = m.get("tool_calls") or []
         content_text = _content_text(m.get("content", "") or "").strip()
         if tcs:
-            count += 1
+            consecutive += 1
             continue
-        # Pure assistant text response (no tool_calls). If it's
-        # substantive (>100 chars), it's a real answer — reset.
-        # Short content with no tool calls is usually a placeholder
-        # or "okay, I'll do that next" filler — keep counting.
-        if len(content_text) > 100:
+        # Only a substantial text-only response resets.
+        # 500 chars ≈ a real paragraph answer, not filler.
+        if len(content_text) > 500:
             break
-    return count
+        # Filler text — keep counting
+        consecutive += 1
+
+    return {
+        "total_tool_turns": total_tool,
+        "total_text_turns": total_text,
+        "window_tool_turns": window_tool,
+        "window_size": len(window),
+        "consecutive": consecutive,
+    }
 
 
 STALLED_PROGRESS_HINT_TEMPLATE = (
     "[Krull Stalled Progress Warning]\n"
-    "You have made {count} consecutive tool calls without producing "
-    "a final answer to the user. This pattern means you are stuck in "
-    "an exploration loop — tools are running but the workflow is not "
-    "converging on an answer.\n"
+    "You have made {count} tool-call turns without producing a real "
+    "answer to the user ({ratio}% of recent turns were tool calls). "
+    "This pattern means you are stuck in a loop — tools are running "
+    "but the workflow is not converging.\n"
     "\n"
-    "STOP exploring. Whatever search/lookup strategy you have been "
-    "using is not working. Repeating it with different parameters "
-    "(different file offsets, different grep patterns, different URLs) "
-    "will not change the result.\n"
+    "STOP making tool calls. On your next turn, do ONE of these:\n"
+    "  1. SUMMARIZE what you found and what you still need. Be honest.\n"
+    "  2. Give your best answer with the data you already have.\n"
+    "  3. Ask the user for guidance.\n"
     "\n"
-    "On your next turn, do ONE of the following:\n"
-    "  1. SUMMARIZE what you know AND what you do not know. Tell the "
-    "user honestly what you tried, what worked, and what failed.\n"
-    "  2. Give the best honest answer you can with the information "
-    "you have already gathered. Cite the specific tool results you "
-    "are drawing from.\n"
-    "  3. Ask the user for guidance on a different approach.\n"
-    "\n"
-    "Do NOT call another tool unless you have a fundamentally different "
-    "strategy than what you have been doing. Do NOT make up details to "
-    "fill gaps in what you found. An honest 'I tried X, Y, Z and could "
-    "not find this' is always better than a confident wrong answer.\n"
+    "Do NOT call another tool. Do NOT emit filler text like "
+    "'Let me continue...' followed by more tool calls. The user is "
+    "waiting for a real response.\n"
     "[End Krull Stalled Progress Warning]"
+)
+
+HARD_CAP_HINT = (
+    "[Krull Tool Call Limit Reached]\n"
+    "You have used {count} tool-call turns in this conversation. "
+    "Tools have been DISABLED for this turn. You MUST respond with "
+    "text only.\n"
+    "\n"
+    "Summarize your progress so far:\n"
+    "- What the user asked for\n"
+    "- What you have completed\n"
+    "- What remains to be done\n"
+    "- Any errors or blockers encountered\n"
+    "\n"
+    "The user can then decide whether to continue.\n"
+    "[End Krull Tool Call Limit]"
 )
 
 
 def inject_stalled_progress_warning(messages: list) -> list:
-    """If the model has made KRULL_STALLED_PROGRESS_THRESHOLD or more
-    consecutive tool-call turns without a substantive text response,
-    inject a warning telling it to stop exploring and summarize."""
-    count = count_consecutive_tool_turns(messages)
-    if count < KRULL_STALLED_PROGRESS_THRESHOLD:
+    """Detect stalled tool-call loops using windowed ratio analysis.
+
+    Fires when EITHER:
+    - The consecutive tool-call count (filler-resistant) exceeds threshold
+    - The windowed ratio (tool turns / window size) exceeds 80%
+      AND window has at least 8 assistant messages
+    """
+    stats = count_tool_call_stats(messages)
+
+    # Check windowed ratio
+    ratio_triggered = False
+    ratio_pct = 0
+    if stats["window_size"] >= 8:
+        ratio_pct = int(stats["window_tool_turns"] / stats["window_size"] * 100)
+        if ratio_pct >= 80:
+            ratio_triggered = True
+
+    consecutive_triggered = stats["consecutive"] >= KRULL_STALLED_PROGRESS_THRESHOLD
+
+    if not ratio_triggered and not consecutive_triggered:
         return messages
 
-    # Idempotent
+    # Idempotent — don't inject if already present
     for m in messages:
         if m.get("role") == "system" and "[Krull Stalled Progress Warning]" in _content_text(m.get("content", "")):
             return messages
 
-    hint = STALLED_PROGRESS_HINT_TEMPLATE.format(count=count)
-    proxy_log("FILTER", f"+stalled_progress_warning ({count} consecutive tool turns without text answer)",
-              level="warn", data={"stalled_turns": count})
+    count = max(stats["consecutive"], stats["window_tool_turns"])
+    hint = STALLED_PROGRESS_HINT_TEMPLATE.format(count=count, ratio=ratio_pct)
+    trigger = "ratio" if ratio_triggered else "consecutive"
+    proxy_log("FILTER", f"+stalled_progress_warning ({trigger}: consecutive={stats['consecutive']} "
+              f"window={stats['window_tool_turns']}/{stats['window_size']} "
+              f"total={stats['total_tool_turns']})",
+              level="warn", data=stats)
     return _insert_after_system_messages(messages, hint)
+
+
+def apply_hard_tool_cap(messages: list, tools: list | None) -> tuple[list, list | None]:
+    """If total tool-call turns exceed KRULL_TOOL_CALL_HARD_CAP, strip
+    all tools and inject a message forcing a text-only response.
+
+    Returns (messages, tools) — tools will be [] if cap is hit.
+    """
+    if not tools:
+        return messages, tools
+
+    stats = count_tool_call_stats(messages)
+    if stats["total_tool_turns"] < KRULL_TOOL_CALL_HARD_CAP:
+        return messages, tools
+
+    # Already injected?
+    for m in messages:
+        if m.get("role") == "system" and "[Krull Tool Call Limit Reached]" in _content_text(m.get("content", "")):
+            return messages, []
+
+    hint = HARD_CAP_HINT.format(count=stats["total_tool_turns"])
+    proxy_log("FILTER", f"+hard_tool_cap (total_tool_turns={stats['total_tool_turns']} >= {KRULL_TOOL_CALL_HARD_CAP}, "
+              f"stripping all tools)",
+              level="warn", data={"total_tool_turns": stats["total_tool_turns"],
+                                  "cap": KRULL_TOOL_CALL_HARD_CAP})
+    messages = _insert_after_system_messages(messages, hint)
+    return messages, []
 
 
 def maybe_lock_to_planning(messages: list, tools: list | None) -> list | None:
@@ -2673,10 +2763,16 @@ def chat_to_ollama_request(chat_body: dict) -> dict:
             msg["tool_calls"] = fixed_tcs
         messages.append(msg)
 
+    # Keep the model loaded in GPU memory for 30 minutes after each
+    # request. Default is 5m, which causes cold-start evictions mid-session
+    # when tool-call loops take longer than expected between API calls.
+    keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+
     ollama_body = {
         "model": chat_body.get("model", ""),
         "messages": messages,
         "stream": chat_body.get("stream", False),
+        "keep_alive": keep_alive,
         # Small-model determinism override: force temperature=0 and top_p=1
         # so the same prompt produces the same output every run. Default
         # Ollama temperature is ~0.7, which makes the qwen 9B's "use tools"
@@ -3153,6 +3249,13 @@ async def proxy(request: Request, path: str):
             tools=chat_body.get("tools"),
         )
 
+        # Hard cap: if the model has exceeded the total tool-call limit,
+        # strip all tools and force a text-only response. This is the
+        # nuclear option when loop_break and stalled_progress both fail.
+        chat_body["messages"], chat_body["tools"] = apply_hard_tool_cap(
+            chat_body["messages"], chat_body.get("tools"),
+        )
+
         # Adaptive temperature: if the model is in a tool-call loop,
         # elevate temperature to give it variance to break out. Returns
         # 0.0 for normal operation; chat_to_ollama_request only honors
@@ -3357,6 +3460,12 @@ async def proxy(request: Request, path: str):
                 has_tools=has_tools,
                 tools=data.get("tools"),
             )
+            # Hard cap: strip tools if model has exceeded total limit
+            data["messages"], capped_tools = apply_hard_tool_cap(
+                data["messages"], data.get("tools"),
+            )
+            if capped_tools is not None:
+                data["tools"] = capped_tools
             if "tools" in data:
                 data["tools"] = filter_tools(data["tools"])
 
