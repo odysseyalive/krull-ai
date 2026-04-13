@@ -979,6 +979,132 @@ def inject_data_starvation_warning(messages: list) -> list:
     return _insert_after_system_messages(messages, hint)
 
 
+# ── Synthesis directive ─────────────────────────────────────────────────
+#
+# Complementary to data starvation (which fires when tools FAIL): this
+# fires when tools SUCCEED but the model might still hedge instead of
+# synthesizing from the data it has.
+#
+# Observed pattern on qwen 9B: the model reads 3-4 substantial files,
+# has all the information it needs, but produces a hedging meta-answer
+# ("the materials don't specify...", "check Canvas for details...") instead
+# of extracting and citing the specific content from its tool results.
+# Claude Opus, given the same data through the same pipeline, synthesizes
+# a detailed specific answer.
+#
+# This is a behavioral gap, not a data gap. The nudge tells the model
+# HOW to use the data: extract specifics, cite details, don't defer to
+# external systems when the retrieved content already contains the answer.
+#
+# Detection: ≥3 non-failure tool results with >200 chars each AND no
+# substantial text answer (>500 chars without tool_calls) produced yet.
+# This means it fires starting from the turn where the model has enough
+# data to work with and hasn't yet given a real answer — typically the
+# "final synthesis" turn.
+#
+# Position: appended at the END of the messages array. This is the
+# highest-attention slot — the last thing the model reads before
+# generating. Same technique as the slash command recency reminder.
+
+SYNTHESIS_DIRECTIVE = (
+    "[Krull Synthesis Directive]\n"
+    "Your tool calls have returned substantial content. When you "
+    "produce your answer on this turn:\n"
+    "- Extract and cite SPECIFIC details from the tool results: "
+    "vocabulary, names, dates, definitions, steps, code, line numbers\n"
+    "- If the retrieved content contains the answer to the user's "
+    "question, give that answer directly and specifically\n"
+    "- Do NOT say 'the materials don't specify' or 'check [external "
+    "system]' when the content you retrieved actually does contain "
+    "the information — reread your tool results above\n"
+    "- Structure your answer around the specific content you found, "
+    "not around meta-commentary about what the materials do or "
+    "don't contain\n"
+    "- If the data genuinely does not contain the answer, say "
+    "specifically what IS in the data and what is missing\n"
+    "[End Krull Synthesis Directive]"
+)
+
+
+def _count_substantial_tool_results(messages: list) -> int:
+    """Count tool results with substantial (non-failure) content.
+
+    'Substantial' means ≥200 chars of non-failure content — enough to
+    contain real information rather than just an error message or a
+    tiny snippet. Used by the synthesis directive to decide whether
+    the model has accumulated enough data to synthesize from.
+    """
+    count = 0
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            continue
+        if len(content) < 200:
+            continue
+        if _is_failure_result(content):
+            continue
+        count += 1
+    return count
+
+
+def _has_substantial_text_answer(messages: list) -> bool:
+    """Has the model already produced a substantial text answer?
+
+    A 'substantial text answer' is an assistant message with >500 chars
+    and no tool_calls — meaning the model actually wrote a real response
+    rather than a filler line between tool calls. Used to avoid injecting
+    the synthesis directive after the model has already given its answer.
+    """
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        if m.get("tool_calls"):
+            continue
+        content = _content_text(m.get("content", "") or "")
+        if len(content) > 500:
+            return True
+    return False
+
+
+def inject_synthesis_directive(messages: list) -> list:
+    """When the model has accumulated substantial tool results but hasn't
+    yet produced a real answer, inject a directive pushing it to
+    synthesize from the data rather than hedging.
+
+    This addresses a behavioral gap in smaller models: they retrieve
+    the data correctly (same tool-call pattern as larger models) but
+    then produce hedging meta-answers instead of specific synthesized
+    responses. The directive tells the model HOW to use the data it has.
+
+    Fires when:
+    - ≥3 non-failure tool results with ≥200 chars each
+    - No substantial text answer (>500 chars, no tool_calls) yet
+
+    Position: appended at the END of messages for maximum attention.
+    Idempotent: won't double-inject if already present.
+    """
+    # Idempotent
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str) and "[Krull Synthesis Directive]" in content:
+            return messages
+
+    substantial = _count_substantial_tool_results(messages)
+    if substantial < 3:
+        return messages
+
+    if _has_substantial_text_answer(messages):
+        return messages
+
+    messages.append({"role": "system", "content": SYNTHESIS_DIRECTIVE})
+    proxy_log("FILTER", f"+synthesis_directive ({substantial} substantial tool results, "
+              f"no text answer yet)",
+              data={"substantial_results": substantial})
+    return messages
+
+
 # Stalled progress detection (task #23, revised for filler-text evasion).
 #
 # The original detector counted consecutive tool-call assistant turns,
@@ -1836,8 +1962,15 @@ def truncate_large_tool_results(messages: list) -> list:
     result independently keeps context growth linear in *number* of
     tool calls rather than in tool result sizes.
 
+    Uses a head+tail strategy: keeps the first 75% and last 25% of the
+    cap budget, with a clear marker showing what was dropped from the
+    middle. This preserves document structure — headers, vocabulary
+    lists, and metadata at the top AND conclusions, summaries, and
+    final sections at the bottom. The middle (typically the longest,
+    most repetitive section) is where content is dropped.
+
     The model can re-Read specific lines via offset/limit if it needs
-    content beyond the cap — the truncation marker tells it how.
+    content from the dropped middle section.
 
     General-purpose: works for any tool (Read, Bash, Grep, etc.), any
     skill, any project. No skill-specific logic.
@@ -1849,6 +1982,11 @@ def truncate_large_tool_results(messages: list) -> list:
     truncated = 0
     saved_chars = 0
     cap = KRULL_TOOL_RESULT_MAX_CHARS
+    # Reserve ~250 chars for the marker itself so total output ≈ cap
+    marker_overhead = 300
+    effective_cap = cap - marker_overhead
+    head_size = int(effective_cap * 0.75)
+    tail_size = effective_cap - head_size
     for m in messages:
         if m.get("role") != "tool":
             new_messages.append(m)
@@ -1866,24 +2004,27 @@ def truncate_large_tool_results(messages: list) -> list:
             # Already truncated by an earlier pass through this filter
             new_messages.append(m)
             continue
-        kept = content[:cap]
-        dropped = len(content) - cap
+        head = content[:head_size]
+        tail = content[-tail_size:]
+        dropped = len(content) - head_size - tail_size
         marker = (
-            f"\n\n{_TRUNCATION_MARKER}: {dropped} chars dropped to keep "
-            f"the conversation small enough for the model's working "
-            f"window. If you need a different part of this content, "
-            f"re-Read the source with offset/limit parameters to fetch "
-            f"specific lines.]"
+            f"\n\n{_TRUNCATION_MARKER}: {dropped} chars from the middle "
+            f"of this content were dropped to keep the conversation "
+            f"within the model's working window. The beginning and end "
+            f"are preserved above and below. If you need content from "
+            f"the dropped middle section, re-Read the source with "
+            f"offset/limit parameters to fetch specific lines.]\n\n"
         )
         new_msg = dict(m)
-        new_msg["content"] = kept + marker
+        new_msg["content"] = head + marker + tail
         new_messages.append(new_msg)
         truncated += 1
         saved_chars += dropped
     if truncated > 0:
         proxy_log("FILTER", f"+tool_result_truncate ({truncated} results capped, "
-                  f"{saved_chars} chars saved, cap={cap})",
-                  data={"truncated": truncated, "saved_chars": saved_chars, "cap": cap})
+                  f"{saved_chars} chars saved, cap={cap}, strategy=head+tail)",
+                  data={"truncated": truncated, "saved_chars": saved_chars,
+                        "cap": cap, "head": head_size, "tail": tail_size})
     return new_messages
 
 
@@ -2783,6 +2924,13 @@ async def apply_filters(
     messages = inject_stalled_progress_warning(messages)
     messages = truncate_large_tool_results(messages)
     messages = compact_context(messages)
+    # Synthesis directive goes LAST — after compact_context — so it lands
+    # at the very end of the messages array, the highest-attention slot.
+    # Must be after truncation (which may reduce tool result sizes) and
+    # after compaction (which may rearrange messages). The directive's
+    # detection logic counts substantial tool results in the final message
+    # state, so running it here sees the true picture.
+    messages = inject_synthesis_directive(messages)
     return messages
 
 
