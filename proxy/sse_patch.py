@@ -550,6 +550,33 @@ SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
     "[End Krull Skill Follow-Through]"
 )
 
+# Condensed recency reminder injected as a system message near the END
+# of the messages array when the full followthrough directive (above) is
+# attached to a user message that's too far from the generation point.
+#
+# In Responses API conversations, there's typically only ONE user message
+# near the top of the conversation. All subsequent turns are
+# function_call / function_call_output pairs — no new user messages.
+# As the conversation grows, the followthrough directive (appended to
+# that early user message) drifts outside the model's effective attention
+# window. The qwen 9B stops attending to content that's 40+ messages
+# and 50K+ tokens before the generation point.
+#
+# This recency reminder is injected at the END of the messages array
+# (right before the model generates) so it lands in the highest-attention
+# slot. It's a condensed version — just enough for the model to know
+# what it's supposed to be doing and that it should NOT stop early.
+RECENCY_REMINDER_THRESHOLD = 15  # messages between user msg and end
+SLASH_COMMAND_RECENCY_REMINDER = (
+    "[Active Skill — Continue Working]\n"
+    "You are executing the /{skill_name} skill. Task: {args}\n"
+    "Your last tool call returned results. You MUST continue: read "
+    "any available reference files, follow the skill's procedure, "
+    "and produce a complete answer. Do NOT stop with a brief status "
+    "update or a single sentence. If a specific procedure file was "
+    "not found, use the reference files that ARE available."
+)
+
 
 def inject_slash_command_protocol(messages: list) -> list:
     """If the latest user message represents a slash command (in either
@@ -632,6 +659,22 @@ def inject_slash_command_protocol(messages: list) -> list:
     proxy_log("FILTER", f"{log_label} (/{skill_name}, shape={shape}, "
               f"+{len(directive)} chars to user msg)",
               data={"skill": skill_name, "shape": shape, "chars": len(directive)})
+
+    # Recency reminder: if the user message is far from the generation
+    # point (end of messages), the model can't attend to the directive
+    # we just appended. Inject a condensed reminder as a system message
+    # at the END so it lands in the highest-attention slot.
+    distance = len(messages) - 1 - last_user_idx
+    if shape == "loaded" and distance >= RECENCY_REMINDER_THRESHOLD:
+        reminder = SLASH_COMMAND_RECENCY_REMINDER.format(
+            skill_name=skill_name, args=escaped_args
+        )
+        messages.append({"role": "system", "content": reminder})
+        proxy_log("FILTER", f"+skill_recency_reminder (/{skill_name}, "
+                  f"distance={distance}, +{len(reminder)} chars at end)",
+                  data={"skill": skill_name, "distance": distance,
+                        "chars": len(reminder)})
+
     return messages
 
 
