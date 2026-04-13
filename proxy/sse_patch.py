@@ -664,6 +664,12 @@ def inject_slash_command_protocol(messages: list) -> list:
     # point (end of messages), the model can't attend to the directive
     # we just appended. Inject a condensed reminder as a system message
     # at the END so it lands in the highest-attention slot.
+    #
+    # In Responses API conversations there's typically only ONE user
+    # message near the top. But when a skill loads, Claude Code injects
+    # a second user message with the skill content, which can be close
+    # to the end. Only fire the reminder when the user message is
+    # genuinely far from the generation point.
     distance = len(messages) - 1 - last_user_idx
     if shape == "loaded" and distance >= RECENCY_REMINDER_THRESHOLD:
         reminder = SLASH_COMMAND_RECENCY_REMINDER.format(
@@ -989,7 +995,7 @@ def inject_data_starvation_warning(messages: list) -> list:
 # Hard cap: after this many TOTAL tool-call assistant turns in the
 # conversation, strip tools entirely and force a text response.
 KRULL_TOOL_CALL_HARD_CAP = int(
-    os.environ.get("KRULL_TOOL_CALL_HARD_CAP", "30")
+    os.environ.get("KRULL_TOOL_CALL_HARD_CAP", "20")
 )
 
 
