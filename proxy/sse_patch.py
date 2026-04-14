@@ -100,7 +100,17 @@ NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "131072"))
 # independently keeps context growth linear in number of tool calls
 # rather than in tool result sizes.
 KRULL_TOOL_RESULT_MAX_CHARS = int(
-    os.environ.get("KRULL_TOOL_RESULT_MAX_CHARS", "20000")
+    os.environ.get("KRULL_TOOL_RESULT_MAX_CHARS", "15000")
+)
+# Size above which a single tool result is considered "large" and
+# triggers the synthesis directive on its own (even if it's the only
+# substantial result so far). Empirically, a single result this big
+# is enough to overwhelm the 9B model's working attention — after
+# receiving it, the model often emits an empty response because it
+# can't compress the data into an answer. The directive tells it to
+# synthesize NOW rather than call more tools.
+KRULL_LARGE_RESULT_SYNTHESIS_THRESHOLD = int(
+    os.environ.get("KRULL_LARGE_RESULT_SYNTHESIS_THRESHOLD", "5000")
 )
 # Stalled-progress threshold (task #23): if the model has made this
 # many consecutive tool-call turns without producing a final text
@@ -538,6 +548,15 @@ SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
     "description (e.g. 'this is for course files') doesn't seem to "
     "match perfectly. Try the procedure FIRST. The procedure may "
     "handle your input fine.\n"
+    "  - Default to the procedure's FIRST or DOMINANT workflow "
+    "when it describes multiple directions or branches (e.g. read↔write, "
+    "forward↔reverse, language A↔language B, lookup↔create). Procedure "
+    "files often lead with the most common workflow, but the alternate "
+    "branches are real and supported. Check what the user's INPUT "
+    "actually looks like and pick the matching branch — don't assume "
+    "the first-described workflow is the only one. If the procedure "
+    "has a detection/routing section (e.g. 'Input Language Detection', "
+    "'Mode Selection'), use it.\n"
     "  - Produce a final answer from training knowledge while "
     "claiming you 'used the skill'. Use the procedure's actual tool "
     "calls and cite their actual results.\n"
@@ -546,7 +565,9 @@ SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
     "input — the skill may need an updated procedure file' is "
     "always better than a fabricated answer.\n"
     "\n"
-    "The procedure exists for a reason. Follow it.\n"
+    "The procedure exists for a reason. Follow it. If the procedure "
+    "supports multiple directions or modes, route based on the user's "
+    "actual input, not on which direction appears first in the file.\n"
     "[End Krull Skill Follow-Through]"
 )
 
@@ -574,7 +595,14 @@ SLASH_COMMAND_RECENCY_REMINDER = (
     "any available reference files, follow the skill's procedure, "
     "and produce a complete answer. Do NOT stop with a brief status "
     "update or a single sentence. If a specific procedure file was "
-    "not found, use the reference files that ARE available."
+    "not found, use the reference files that ARE available.\n"
+    "\n"
+    "If the procedure supports multiple directions or modes, route "
+    "based on the user's actual input — don't default to whichever "
+    "workflow appears first in the file. Do not refuse the input "
+    "because the skill's dominant framing feels like a mismatch; "
+    "check for a detection/routing section and follow the matching "
+    "branch."
 )
 
 
@@ -1008,8 +1036,12 @@ def inject_data_starvation_warning(messages: list) -> list:
 
 SYNTHESIS_DIRECTIVE = (
     "[Krull Synthesis Directive]\n"
-    "Your tool calls have returned substantial content. When you "
-    "produce your answer on this turn:\n"
+    "Your tool calls have returned substantial content. Your NEXT "
+    "response MUST be text output that answers the user's request. "
+    "Do NOT emit more tool calls on this turn. Do NOT emit an empty "
+    "response. Write the answer now.\n"
+    "\n"
+    "When you write:\n"
     "- Extract and cite SPECIFIC details from the tool results: "
     "vocabulary, names, dates, definitions, steps, code, line numbers\n"
     "- If the retrieved content contains the answer to the user's "
@@ -1020,6 +1052,10 @@ SYNTHESIS_DIRECTIVE = (
     "- Structure your answer around the specific content you found, "
     "not around meta-commentary about what the materials do or "
     "don't contain\n"
+    "- If a tool returned many candidates (e.g., multiple matches "
+    "per input), pick the best one per input and synthesize — do "
+    "not list them all, do not call the tool again with different "
+    "arguments\n"
     "- If the data genuinely does not contain the answer, say "
     "specifically what IS in the data and what is missing\n"
     "[End Krull Synthesis Directive]"
@@ -1047,6 +1083,26 @@ def _count_substantial_tool_results(messages: list) -> int:
             continue
         count += 1
     return count
+
+
+def _last_tool_result_size(messages: list) -> int:
+    """Return the size (in chars) of the most recent tool result, or 0.
+
+    Used by the synthesis directive to trigger on a single large result
+    — one big dump is enough to overwhelm a small model's working
+    attention and cause it to stall, even if prior turns had small
+    results.
+    """
+    for m in reversed(messages):
+        if m.get("role") != "tool":
+            continue
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            return 0
+        if _is_failure_result(content):
+            return 0
+        return len(content)
+    return 0
 
 
 def _has_substantial_text_answer(messages: list) -> bool:
@@ -1078,9 +1134,13 @@ def inject_synthesis_directive(messages: list) -> list:
     then produce hedging meta-answers instead of specific synthesized
     responses. The directive tells the model HOW to use the data it has.
 
-    Fires when:
-    - ≥3 non-failure tool results with ≥200 chars each
-    - No substantial text answer (>500 chars, no tool_calls) yet
+    Fires when EITHER:
+    - ≥3 non-failure tool results with ≥200 chars each (accumulated evidence), OR
+    - The most recent tool result is ≥KRULL_LARGE_RESULT_SYNTHESIS_THRESHOLD chars
+      (one big dump — enough to saturate working attention on its own)
+
+    In both cases, requires: no substantial text answer (>500 chars, no tool_calls)
+    yet in the conversation.
 
     Position: appended at the END of messages for maximum attention.
     Idempotent: won't double-inject if already present.
@@ -1091,17 +1151,23 @@ def inject_synthesis_directive(messages: list) -> list:
         if isinstance(content, str) and "[Krull Synthesis Directive]" in content:
             return messages
 
-    substantial = _count_substantial_tool_results(messages)
-    if substantial < 3:
-        return messages
-
     if _has_substantial_text_answer(messages):
         return messages
 
+    substantial = _count_substantial_tool_results(messages)
+    last_size = _last_tool_result_size(messages)
+    large_last = last_size >= KRULL_LARGE_RESULT_SYNTHESIS_THRESHOLD
+
+    if substantial < 3 and not large_last:
+        return messages
+
     messages.append({"role": "system", "content": SYNTHESIS_DIRECTIVE})
-    proxy_log("FILTER", f"+synthesis_directive ({substantial} substantial tool results, "
-              f"no text answer yet)",
-              data={"substantial_results": substantial})
+    trigger = "large_last" if large_last and substantial < 3 else "accumulated"
+    proxy_log("FILTER", f"+synthesis_directive ({substantial} substantial results, "
+              f"last={last_size} chars, trigger={trigger})",
+              data={"substantial_results": substantial,
+                    "last_result_chars": last_size,
+                    "trigger": trigger})
     return messages
 
 
@@ -1122,6 +1188,17 @@ def inject_synthesis_directive(messages: list) -> list:
 # conversation, strip tools entirely and force a text response.
 KRULL_TOOL_CALL_HARD_CAP = int(
     os.environ.get("KRULL_TOOL_CALL_HARD_CAP", "20")
+)
+
+# Working-attention cap: strip tools when estimated prompt tokens exceed
+# this threshold AND the model has accumulated substantial tool results.
+# Small models like qwen 9B choke well before their nominal context size
+# (131K) — empirically they start producing empty output around 35–40K
+# prompt tokens. When we're in that zone with enough data already gathered,
+# stripping tools forces the model to synthesize rather than keep loading
+# more files. Generic: any skill, any workflow, any tool mix.
+KRULL_WORKING_ATTENTION_TOKENS = int(
+    os.environ.get("KRULL_WORKING_ATTENTION_TOKENS", "28000")
 )
 
 
@@ -1199,11 +1276,17 @@ STALLED_PROGRESS_HINT_TEMPLATE = (
 
 HARD_CAP_HINT = (
     "[Krull Tool Call Limit Reached]\n"
-    "You have used {count} tool-call turns in this conversation. "
-    "Tools have been DISABLED for this turn. You MUST respond with "
-    "text only.\n"
+    "{reason} Tools have been DISABLED for this turn. You MUST "
+    "respond with text only.\n"
     "\n"
-    "Summarize your progress so far:\n"
+    "Use the tool results you have ALREADY gathered to produce the "
+    "user's answer now. Do not ask for more data — synthesize from "
+    "what's in this conversation. If the data is sufficient to answer, "
+    "give the answer directly and specifically (cite content, "
+    "vocabulary, definitions, steps you found). If something is "
+    "genuinely missing, say what you have and what you couldn't find.\n"
+    "\n"
+    "If you cannot synthesize a full answer, summarize:\n"
     "- What the user asked for\n"
     "- What you have completed\n"
     "- What remains to be done\n"
@@ -1253,8 +1336,21 @@ def inject_stalled_progress_warning(messages: list) -> list:
 
 
 def apply_hard_tool_cap(messages: list, tools: list | None) -> tuple[list, list | None]:
-    """If total tool-call turns exceed KRULL_TOOL_CALL_HARD_CAP, strip
-    all tools and inject a message forcing a text-only response.
+    """If total tool-call turns OR estimated prompt tokens exceed their
+    caps, strip all tools and inject a message forcing a text-only
+    response.
+
+    Two triggers — either fires independently:
+    - total_tool_turns >= KRULL_TOOL_CALL_HARD_CAP (count-based)
+    - est_prompt_tokens >= KRULL_WORKING_ATTENTION_TOKENS (size-based)
+
+    The size trigger catches the common case where a small model hasn't
+    made many tool calls but has accumulated enough large results (big
+    Reads, flooded Bash outputs) to saturate its working attention. In
+    that state it typically emits empty output instead of synthesizing —
+    stripping tools forces it to produce text from what it already has.
+
+    Generic: works for any tool, any skill, any workflow.
 
     Returns (messages, tools) — tools will be [] if cap is hit.
     """
@@ -1262,19 +1358,49 @@ def apply_hard_tool_cap(messages: list, tools: list | None) -> tuple[list, list 
         return messages, tools
 
     stats = count_tool_call_stats(messages)
-    if stats["total_tool_turns"] < KRULL_TOOL_CALL_HARD_CAP:
+    est_tokens = sum(_msg_tokens(m) for m in messages)
+
+    count_triggered = stats["total_tool_turns"] >= KRULL_TOOL_CALL_HARD_CAP
+    size_triggered = est_tokens >= KRULL_WORKING_ATTENTION_TOKENS
+
+    if not (count_triggered or size_triggered):
         return messages, tools
+
+    # Only strip if there's actually substantial tool data to synthesize
+    # from. If we haven't gathered anything yet, stripping tools would
+    # force the model to answer from training knowledge, which is worse.
+    if size_triggered and not count_triggered:
+        if _count_substantial_tool_results(messages) < 1:
+            return messages, tools
 
     # Already injected?
     for m in messages:
         if m.get("role") == "system" and "[Krull Tool Call Limit Reached]" in _content_text(m.get("content", "")):
             return messages, []
 
-    hint = HARD_CAP_HINT.format(count=stats["total_tool_turns"])
-    proxy_log("FILTER", f"+hard_tool_cap (total_tool_turns={stats['total_tool_turns']} >= {KRULL_TOOL_CALL_HARD_CAP}, "
-              f"stripping all tools)",
+    if count_triggered:
+        reason = (
+            f"You have used {stats['total_tool_turns']} tool-call turns "
+            f"in this conversation (cap: {KRULL_TOOL_CALL_HARD_CAP})."
+        )
+        trigger_name = "count"
+    else:
+        reason = (
+            f"This conversation has grown to ~{est_tokens} tokens, past "
+            f"the working-attention threshold ({KRULL_WORKING_ATTENTION_TOKENS}) "
+            f"for this model. You already have substantial tool data."
+        )
+        trigger_name = "size"
+
+    hint = HARD_CAP_HINT.format(reason=reason)
+    proxy_log("FILTER", f"+hard_tool_cap (trigger={trigger_name}, "
+              f"tool_turns={stats['total_tool_turns']}, "
+              f"est_tokens={est_tokens}, stripping all tools)",
               level="warn", data={"total_tool_turns": stats["total_tool_turns"],
-                                  "cap": KRULL_TOOL_CALL_HARD_CAP})
+                                  "count_cap": KRULL_TOOL_CALL_HARD_CAP,
+                                  "est_tokens": est_tokens,
+                                  "size_cap": KRULL_WORKING_ATTENTION_TOKENS,
+                                  "trigger": trigger_name})
     messages = _insert_after_system_messages(messages, hint)
     return messages, []
 
