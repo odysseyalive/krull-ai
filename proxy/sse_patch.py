@@ -1724,22 +1724,45 @@ GROUNDED_ANSWER_SCHEMA = {
 }
 
 
+def _has_active_skill_passages(messages: list) -> bool:
+    """True when a BM25-retrieved passage block is present in the
+    prompt. Passages count as a substantial grounding source alongside
+    tool results — the proxy fetched them from real skill files, the
+    model can cite from them verbatim, and citation verification
+    accepts substrings from them."""
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        if "[Active Skill Passages]" in _content_text(m.get("content", "")):
+            return True
+    return False
+
+
 def _should_force_grounded_answer(messages: list) -> bool:
     """Fires only after the model has done multiple turns of tool work
     AND accumulated substantial results. Stricter than
     inject_synthesis_directive (which fires on the first large result)
     because grounded enforcement strips the tools, so we must be sure
-    the model has had real opportunity to do its lookup work first."""
+    the model has had real opportunity to do its lookup work first.
+
+    Thresholds are lowered when the BM25 passage block is present:
+    retrieval pre-loads grounding content, so the model needs fewer
+    tool turns to be ready to answer, and the grounded-pass has
+    substantial verifiable content (passages themselves) even if the
+    model only ran 2 tool calls."""
     if _has_substantial_text_answer(messages):
         return False
     tool_turns = sum(
         1 for m in messages
         if m.get("role") == "assistant" and m.get("tool_calls")
     )
-    if tool_turns < 4:
+    has_passages = _has_active_skill_passages(messages)
+    min_turns = 2 if has_passages else 4
+    if tool_turns < min_turns:
         return False
     substantial = _count_substantial_tool_results(messages)
-    return substantial >= 2
+    min_substantial = 1 if has_passages else 2
+    return substantial >= min_substantial
 
 
 def _flatten_messages_for_format(messages: list) -> list:
@@ -1784,13 +1807,18 @@ def _flatten_messages_for_format(messages: list) -> list:
 
 
 def _collect_tool_result_text(messages: list) -> str:
-    """Concatenate all tool result content. Used to verify citations
-    via substring match."""
+    """Concatenate all tool result content plus any proxy-injected
+    passage blocks. Used to verify citations via substring match.
+    Passage blocks count as verifiable grounding because the proxy
+    read them from real skill files on disk."""
     out = []
     for m in messages:
-        if m.get("role") != "tool":
-            continue
-        out.append(_content_text(m.get("content", "")))
+        role = m.get("role")
+        content = _content_text(m.get("content", ""))
+        if role == "tool":
+            out.append(content)
+        elif role == "system" and "[Active Skill Passages]" in content:
+            out.append(content)
     return "\n".join(out)
 
 
