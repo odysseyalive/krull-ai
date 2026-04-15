@@ -32,27 +32,112 @@ export interface RecommendedModel {
   vram: string;
   description: string;
   bestFor: string;
+  /** Approximate VRAM occupied by the weights alone (bytes). Used to
+   * compute how much VRAM is left for the KV cache. */
+  weightBytes: number;
+  /** Approximate KV cache footprint per context token at Ollama's
+   * default KV quantization (fp16). Rough estimate — drives the
+   * dynamic context suggestion. */
+  kvBytesPerToken: number;
+  /** Model's native context window — the suggestion never exceeds this
+   * even when VRAM would technically allow more. */
+  nativeMaxCtx: number;
   contextSuggestion?: ContextSuggestion;
 }
 
 export const RECOMMENDED_MODELS: RecommendedModel[] = [
   {
-    key: "qwen3.5:9b",
-    label: "Qwen 3.5 · 9B",
-    vram: "~7 GB",
+    key: "gemma4:e2b",
+    label: "Gemma 4 · e2b",
+    vram: "~4 GB",
     description:
-      "The recommended default. Strong procedure-following, reliable tool calling, and correct grammar-pattern application on BM25-retrieved passages.",
-    bestFor: "Most users. Daily Claude Code work on a 8–12 GB GPU.",
+      "Google Gemma 4 effective-2B variant. Light footprint, fast first-token latency, clean structured output. The small-VRAM default.",
+    bestFor: "4–8 GB GPUs, laptops, or anyone who wants snappy responses over maximum depth.",
+    weightBytes: 4 * 1024 * 1024 * 1024,
+    kvBytesPerToken: 70 * 1024,
+    nativeMaxCtx: 131072,
   },
   {
     key: "gemma4:e4b",
     label: "Gemma 4 · e4b",
     vram: "~10 GB",
     description:
-      "Google Gemma 4 effective-4B variant. Cleaner structured output and more precise citations than the 9B qwen; larger VRAM footprint.",
+      "Google Gemma 4 effective-4B variant. Sharper reasoning and more precise citations than e2b; larger VRAM footprint.",
     bestFor: "12+ GB GPUs where citation precision and output structure matter more than footprint.",
+    weightBytes: 10 * 1024 * 1024 * 1024,
+    kvBytesPerToken: 120 * 1024,
+    nativeMaxCtx: 131072,
   },
 ];
+
+/**
+ * Context window + auto-compact threshold suggestion, computed from the
+ * host's free VRAM after subtracting the model weights and a runtime
+ * overhead. Falls back to a conservative 8k window when GPU VRAM is not
+ * detectable (Apple Silicon, CPU-only hosts).
+ *
+ * The math is deliberately rough: Ollama's actual KV cache footprint
+ * shifts with KV quantization, flash attention, and how Ollama batches
+ * prefill. We apply an 85% safety margin on the computed token count
+ * so minor estimation error doesn't push the user over the edge into
+ * an OOM during a long conversation.
+ */
+export function computeContextSuggestion(
+  model: RecommendedModel,
+  gpu: { vendor: "nvidia" | "none"; totalBytes?: number; name?: string },
+): ContextSuggestion {
+  const gbFmt = (bytes: number): string =>
+    `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  const tokenFmt = (n: number): string => `${Math.round(n / 1024)}k tokens`;
+  const roundToTier = (n: number): number => {
+    const tiers = [131072, 65536, 32768, 16384, 8192, 4096, 2048];
+    for (const t of tiers) if (n >= t) return t;
+    return 2048;
+  };
+
+  // Fallback: no detected GPU — suggest a conservative 8k window so
+  // the user at least gets a sensible starting point.
+  if (gpu.vendor === "none" || !gpu.totalBytes) {
+    const numCtx = 8192;
+    return {
+      numCtx,
+      compactLimit: Math.round(numCtx * 0.75),
+      rationale:
+        `No GPU detected, so this is a conservative CPU-friendly default. ` +
+        `If you're on Apple Silicon, set OLLAMA_NUM_CTX manually — unified ` +
+        `memory can usually go much higher than 8k, but krull-home can't ` +
+        `introspect Metal from inside the container. Auto-compact at 75%.`,
+    };
+  }
+
+  // Budget: total VRAM minus weights minus ~1 GB runtime overhead
+  // (CUDA kernels, Ollama allocator slack, fragmentation).
+  const overheadBytes = 1 * 1024 * 1024 * 1024;
+  const kvBudget = Math.max(
+    0,
+    gpu.totalBytes - model.weightBytes - overheadBytes,
+  );
+  const rawMaxTokens = kvBudget / model.kvBytesPerToken;
+  // 85% safety margin on the computed KV token count.
+  const safeMaxTokens = Math.floor(rawMaxTokens * 0.85);
+  const numCtx = Math.min(model.nativeMaxCtx, roundToTier(safeMaxTokens));
+  const compactLimit = Math.round(numCtx * 0.75);
+
+  const rationale =
+    `Your ${gpu.name ?? "GPU"} reports ${gbFmt(gpu.totalBytes)} total VRAM. ` +
+    `After the ${model.label} weights (~${gbFmt(model.weightBytes)}) and ` +
+    `~1 GB runtime overhead, ${gbFmt(kvBudget)} is left for the KV cache. ` +
+    `At ~${Math.round(model.kvBytesPerToken / 1024)} KB per token that fits ` +
+    `roughly ${tokenFmt(rawMaxTokens)}; rounded down to a friendly size with ` +
+    `an 85% safety margin gives ${tokenFmt(numCtx)}` +
+    (numCtx >= model.nativeMaxCtx
+      ? ` — capped at Gemma 4's native 128k window.`
+      : `.`) +
+    ` Auto-compact fires at 75% (${tokenFmt(compactLimit)}) so the model ` +
+    `never bumps the hard wall mid-turn.`;
+
+  return { numCtx, compactLimit, rationale };
+}
 
 interface OllamaTagsResponse {
   models?: Array<{ name?: string }>;

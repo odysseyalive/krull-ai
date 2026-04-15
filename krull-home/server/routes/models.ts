@@ -4,18 +4,21 @@ import {
   RECOMMENDED_MODELS,
   listInstalledModels,
   deleteInstalledModel,
+  computeContextSuggestion,
 } from "../lib/models.js";
 import { createJob } from "../lib/jobs.js";
 import { selectActiveModel, startModelPull } from "../lib/modelInstaller.js";
 import { readEnvFile, getValue } from "../lib/envFile.js";
+import { detectHardware } from "../lib/hardware.js";
 
 const router = Router();
 const REPO = process.env.KRULL_REPO ?? "/workspace";
 
 router.get("/models", async (_req, res) => {
-  const [installed, env] = await Promise.all([
+  const [installed, env, hardware] = await Promise.all([
     listInstalledModels(),
     readEnvFile(path.join(REPO, ".env")),
+    detectHardware(),
   ]);
   const installedSet = new Set(installed);
   const active = getValue(env, "OLLAMA_MODEL") ?? "";
@@ -25,6 +28,7 @@ router.get("/models", async (_req, res) => {
       ...m,
       installed: installedSet.has(m.key),
       active: m.key === active,
+      contextSuggestion: computeContextSuggestion(m, hardware.gpu),
     })),
     other: installed.filter(
       (name) => !RECOMMENDED_MODELS.some((m) => m.key === name),

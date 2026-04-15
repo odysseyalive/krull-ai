@@ -30,7 +30,7 @@ export function ModelPicker(): HTMLElement {
   const sub = document.createElement("p");
   sub.className = "model-picker__sub";
   sub.textContent =
-    "Qwen 3.5 in four flavors: three dense Instruct tiers (4B/9B/27B) and a Mixture-of-Experts hybrid (36B-A3B) for big-context reasoning. Pick the one that fits your GPU and Krull will pull it and wire it into the LiteLLM gateway.";
+    "Google Gemma 4 in two sizes: a light e2b for small-VRAM and laptop setups, and a sharper e4b for 12+ GB GPUs. Both share the native 128k context window. Pick the one that fits your GPU and Krull will pull it and wire it into the LiteLLM gateway.";
   head.append(eyebrow, title, sub);
   wrap.append(head);
 

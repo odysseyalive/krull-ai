@@ -115,14 +115,18 @@ The **Update** button in the top-right of the Krull Home nav (visible on every p
 
 ### Recommended models
 
-Two brains, both empirically verified end-to-end through the SSE proxy (BM25 passage retrieval and grounded-answer pass) against the same translate-skill fixture. Both produce the Opus-reference output across consecutive runs. The "Pick a brain" panel on the Settings page lets you pull and activate either one with one click. Clicking a model points every Claude alias (sonnet, opus, haiku) at that brain and makes it the default for new Open WebUI chats at the same time.
+Two brains, both from Google's Gemma 4 family. The "Pick a brain" panel on the Settings page lets you pull and activate either one with one click. Clicking a model points every Claude alias (sonnet, opus, haiku) at that brain and makes it the default for new Open WebUI chats at the same time.
 
 | Model | VRAM | Best for |
 |---|---|---|
-| `qwen3.5:9b` | ~7 GB | **Recommended default.** Strong procedure-following, reliable tool calling, daily Claude Code work on an 8 to 12 GB GPU |
-| `gemma4:e4b` | ~10 GB | Cleaner structured output and more precise citations than the 9B qwen; 12+ GB GPUs where output structure and citation quality matter more than footprint |
+| `gemma4:e2b` | ~4 GB | **Small-VRAM default.** Light footprint, fast first-token latency, clean structured output. 4 to 8 GB GPUs, laptops, or anyone who wants snappy responses over maximum depth |
+| `gemma4:e4b` | ~10 GB | Sharper reasoning and more precise citations than e2b; 12+ GB GPUs where output structure and citation quality matter more than footprint |
 
-> **Why these two?** Both produce Anthropic-style `tool_use` blocks that Claude Code requires. Qwen 3.5 9B is the lightest model that reliably applies grammar patterns from retrieved passages; Gemma 4 e4b trades roughly 3 GB of VRAM for cleaner structured output and more precise file-line citations. Smaller variants (4B class) were tested and produced inconsistent procedure-following. Other models can be installed via `./krull pull-model <name>` and selected by editing `OLLAMA_MODEL` in the Settings page; see [TECHNICAL.md](TECHNICAL.md#pulling-models) for details.
+> **Why these two?** Both produce Anthropic-style `tool_use` blocks that Claude Code requires and share Gemma 4's native 128k context window. The e2b variant keeps that full window at a fraction of the VRAM because the model itself is small, so it's the right pick anywhere GPU budget is tight; e4b trades roughly 6 GB of VRAM for sharper reasoning and cleaner file-line citations. Other models can be installed via `./krull pull-model <name>` and selected by editing `OLLAMA_MODEL` in the Settings page; see [TECHNICAL.md](TECHNICAL.md#pulling-models) for details.
+
+#### Context window + auto-compact suggestion
+
+The Settings page computes a recommended `OLLAMA_NUM_CTX` and `CONTEXT_COMPACT_LIMIT` dynamically from your actual hardware. It reads your GPU's total VRAM, subtracts the active model's weight footprint and ~1 GB of runtime overhead, then divides the remaining budget by the model's per-token KV cache size. An 85% safety margin is applied to absorb estimation error, the result is rounded down to a friendly tier (8k / 16k / 32k / 64k / 128k), and capped at the model's native 128k window. Auto-compact is set to 75% of that number so the conversation never hits the hard wall mid-turn. Click the **Apply** button next to either field to copy the suggestion into your `.env`; it's a hint, never applied automatically. Hosts with no detectable NVIDIA GPU (Apple Silicon, CPU-only) fall back to a conservative 8k default — set the value manually if your unified memory can go higher.
 
 ---
 

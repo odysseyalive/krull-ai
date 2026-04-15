@@ -196,6 +196,13 @@ install_function \
     "$FUNCTIONS_DIR/map_search.py" \
     "filter"
 
+install_function \
+    "voice_guard" \
+    "Voice Guard" \
+    "Shapes output toward natural conversational voice; strips em-dashes, stock openers/closers, and AI tells" \
+    "$FUNCTIONS_DIR/voice_guard.py" \
+    "filter"
+
 # --- Disable auxiliary task generation ---
 # Open WebUI fires a separate /api/chat call for each of: chat title,
 # chat tags, follow-up question suggestions, and chat autocomplete.
@@ -228,6 +235,60 @@ print(json.dumps(cfg))
 else
     echo "[!] Could not fetch task config — disable manually in"
     echo "    Admin Panel > Settings > Interface if needed."
+fi
+
+# --- Inject default system prompt from sample_prompts/voice-profile.md ---
+# First-run-only: we seed the admin user's System Prompt (ui.system) with
+# the voice profile, but we never overwrite an existing prompt. Once the
+# user has anything in that field — the seed we provided, a hand-written
+# prompt, or a customized version of ours — setup leaves it alone. This
+# keeps setup idempotent without destroying user edits.
+VOICE_PROFILE="$PROJECT_DIR/sample_prompts/voice-profile.md"
+if [ -f "$VOICE_PROFILE" ]; then
+    echo ""
+    echo "Checking default system prompt..."
+    CURRENT_SETTINGS=$(webui_api GET "/api/v1/users/user/settings")
+    ACTION=$(VOICE_FILE="$VOICE_PROFILE" CURRENT="$CURRENT_SETTINGS" python3 << 'PYEOF'
+import json, os, sys
+with open(os.environ['VOICE_FILE']) as f:
+    voice = f.read().strip()
+current = os.environ.get('CURRENT') or ''
+try:
+    settings = json.loads(current) if current.strip() else {}
+except json.JSONDecodeError:
+    settings = {}
+if not isinstance(settings, dict):
+    settings = {}
+ui = settings.get('ui') if isinstance(settings.get('ui'), dict) else {}
+existing = ui.get('system')
+if isinstance(existing, str) and existing.strip():
+    # User already has a prompt set — preserve it.
+    print('SKIP')
+else:
+    ui['system'] = voice
+    settings['ui'] = ui
+    print('SET')
+    print(json.dumps(settings))
+PYEOF
+)
+    STATUS=$(echo "$ACTION" | head -n 1)
+    if [ "$STATUS" = "SET" ]; then
+        PATCHED_SETTINGS=$(echo "$ACTION" | tail -n +2)
+        RESP=$(webui_api POST "/api/v1/users/user/settings/update" "$PATCHED_SETTINGS")
+        if echo "$RESP" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null >/dev/null; then
+            echo "[+] Seeded default system prompt from sample_prompts/voice-profile.md"
+        else
+            echo "[!] System prompt update returned unexpected response — set manually in"
+            echo "    Settings > General > System Prompt if needed."
+        fi
+    elif [ "$STATUS" = "SKIP" ]; then
+        echo "[=] System prompt already set — leaving existing content untouched"
+    else
+        echo "[!] Could not check system prompt state — skipping injection"
+    fi
+else
+    echo ""
+    echo "[!] sample_prompts/voice-profile.md not found — skipping system prompt injection"
 fi
 
 # --- Generate API key for LiteLLM → Open WebUI connection ---

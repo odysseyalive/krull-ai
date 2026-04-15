@@ -17,6 +17,10 @@ echo "Pulling latest images..."
 docker compose --project-directory "$PROJECT_DIR" pull
 
 echo ""
+echo "Rebuilding locally-built services (krull-home, etc.)..."
+docker compose --project-directory "$PROJECT_DIR" build
+
+echo ""
 echo "Recreating containers with new images..."
 docker compose --project-directory "$PROJECT_DIR" up -d --force-recreate
 

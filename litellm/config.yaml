@@ -13,30 +13,30 @@ model_list:
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/qwen3.5:9b
+      model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-d6e646b039e34a589b8b8fd6fcd491b6"
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/qwen3.5:9b
+      model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-d6e646b039e34a589b8b8fd6fcd491b6"
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-opus-4-6
     litellm_params:
-      model: openai/qwen3.5:9b
+      model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-d6e646b039e34a589b8b8fd6fcd491b6"
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
-      model: openai/qwen3.5:9b
+      model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-d6e646b039e34a589b8b8fd6fcd491b6"
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: openai/qwen3.5:9b
+      model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-d6e646b039e34a589b8b8fd6fcd491b6"
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
