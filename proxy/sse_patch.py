@@ -243,11 +243,66 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> str:
             args = stripped
             changed = True
 
+    # Step 3: Shell command string repair — generic across interpreters
+    # and file extensions. Universal shell rule: any absolute path with
+    # whitespace MUST be quoted or the shell word-splits it. The fix
+    # finds `<command-name> <unquoted-path-with-spaces>.<ext>` and
+    # wraps the path in double quotes. No assumption about which
+    # interpreter (bash/python/ruby/node/cat/cd/etc.) or which file
+    # extension — works for any shell command shape.
+    if tool_name == "Bash":
+        cmd = args.get("command") if isinstance(args, dict) else None
+        if isinstance(cmd, str):
+            fixed_cmd = _quote_unquoted_paths_with_spaces(cmd)
+            if fixed_cmd != cmd:
+                args["command"] = fixed_cmd
+                changed = True
+                proxy_log("PROXY", f"Auto-quoted spaced path in shell command",
+                          data={"tool": tool_name})
+
     if changed:
         proxy_log("PROXY", f"Fixed tool params for {tool_name}: {list(args.keys())}",
                   data={"tool": tool_name, "params": list(args.keys())})
         return json.dumps(args)
     return arguments if isinstance(arguments, str) else json.dumps(arguments)
+
+
+# Match `<cmd> /path/with spaces/file.ext` for ANY command name and ANY
+# file extension. The path must:
+#   - start with `/` (absolute)
+#   - not be already wrapped in single or double quotes
+#   - end with `.<extension>` followed by whitespace or end-of-string
+# Non-greedy match on the path body so `cmd /a.x /b.y` captures only the
+# first path. We then check inside _sub() whether the captured path
+# actually contains whitespace — if not, no fix needed and the regex
+# match is left alone.
+_UNQUOTED_PATH_WITH_SPACE_RE = re.compile(
+    r"""(?x)
+    (?P<pre>(?:^|\s|&&|;|\|)\s*)
+    (?P<cmd>[a-zA-Z_][\w.-]*)
+    \s+
+    (?!['"-])
+    (?P<path>/[^\n'"<>|;&]+?\.[a-zA-Z][\w-]*)
+    (?=\s|$)
+    """
+)
+
+
+def _quote_unquoted_paths_with_spaces(command: str) -> str:
+    """If a shell command invokes any binary on an absolute path that
+    contains whitespace and isn't already quoted, wrap that path in
+    double quotes. Interpreter- and extension-agnostic. Universal shell
+    rule: unquoted paths with whitespace are word-split by the shell."""
+    if not command or "/" not in command:
+        return command
+
+    def _sub(m: re.Match) -> str:
+        path = m.group("path")
+        if " " not in path and "\t" not in path:
+            return m.group(0)
+        return f'{m.group("pre")}{m.group("cmd")} "{path}"'
+
+    return _UNQUOTED_PATH_WITH_SPACE_RE.sub(_sub, command)
 
 
 # ── Inlet Filters ─────────────────────────────────────────────────────────
@@ -404,6 +459,9 @@ _COMMAND_ARGS_RE = re.compile(
 _LOADED_SKILL_BASE_DIR_RE = re.compile(
     r"Base directory for this skill:[^\n]*?/skills/([a-zA-Z][a-zA-Z0-9_-]*)"
 )
+_LOADED_SKILL_FULL_PATH_RE = re.compile(
+    r"Base directory for this skill:\s*([^\n]+?)\s*$", re.MULTILINE
+)
 _LOADED_SKILL_ARGUMENTS_RE = re.compile(
     r"ARGUMENTS:\s*([^\n]*)"
 )
@@ -529,47 +587,110 @@ SLASH_COMMAND_PROTOCOL_TEMPLATE = (
 # at the skill's surface description.
 SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
     "\n\n[Krull Skill Follow-Through]\n"
-    "The /{skill_name} skill content has just loaded. You have already "
-    "invoked Skill(skill=\"{skill_name}\"). Your job NOW is to follow "
-    "this skill's defined procedure for the user's request:\n"
-    "    {args}\n"
+    "The /{skill_name} skill body has loaded. Task: {args}\n"
     "\n"
-    "Procedure to follow:\n"
-    "  1. Look for a procedure file in the skill's references/ "
-    "directory (e.g. references/<mode>-procedure.md). Read it.\n"
-    "  2. Follow the procedure step by step. If the procedure says "
-    "to call a helper script (e.g. lib/<helper>.sh), call it via "
-    "Bash. If it says to read a reference file, read it.\n"
-    "  3. Each step uses real tool calls and real results. Cite the "
-    "actual content you got back, not training knowledge.\n"
+    "MUST DO:\n"
+    "  1. Read the procedure file in the skill's references/ "
+    "directory if one exists. Follow it step by step.\n"
+    "  2. Each step is a real tool call producing a real result. "
+    "Cite the result, not training knowledge.\n"
+    "  3. If the procedure routes by input type (mode, direction, "
+    "language), check the user's actual input and pick the matching "
+    "branch — not the first-listed one.\n"
     "\n"
-    "Do NOT:\n"
-    "  - Refuse the user's input because the skill's surface "
-    "description (e.g. 'this is for course files') doesn't seem to "
-    "match perfectly. Try the procedure FIRST. The procedure may "
-    "handle your input fine.\n"
-    "  - Default to the procedure's FIRST or DOMINANT workflow "
-    "when it describes multiple directions or branches (e.g. read↔write, "
-    "forward↔reverse, language A↔language B, lookup↔create). Procedure "
-    "files often lead with the most common workflow, but the alternate "
-    "branches are real and supported. Check what the user's INPUT "
-    "actually looks like and pick the matching branch — don't assume "
-    "the first-described workflow is the only one. If the procedure "
-    "has a detection/routing section (e.g. 'Input Language Detection', "
-    "'Mode Selection'), use it.\n"
-    "  - Produce a final answer from training knowledge while "
-    "claiming you 'used the skill'. Use the procedure's actual tool "
-    "calls and cite their actual results.\n"
-    "  - Invent words, definitions, citations, or facts to fill "
-    "gaps. An honest 'the procedure does not appear to handle this "
-    "input — the skill may need an updated procedure file' is "
-    "always better than a fabricated answer.\n"
-    "\n"
-    "The procedure exists for a reason. Follow it. If the procedure "
-    "supports multiple directions or modes, route based on the user's "
-    "actual input, not on which direction appears first in the file.\n"
+    "MUST NOT:\n"
+    "  - Refuse the input because the skill's surface description "
+    "looks like a mismatch. Run the procedure first.\n"
+    "  - Fabricate words, definitions, citations, or facts. An honest "
+    "'the procedure does not handle this input' beats a confident "
+    "wrong answer.\n"
     "[End Krull Skill Follow-Through]"
 )
+
+# Meta-question detector: distinguishes "run this skill on X" from "tell me
+# about this skill / can it do X?". When a user types /skill <meta-question>,
+# we still want the Skill(...) invocation to happen (so the skill's content
+# loads into context), but on the "loaded" turn we want the model to *answer
+# the question* using the loaded content — not mechanically execute the
+# procedure as if the question were the task. Generic: works for any skill.
+_META_QUESTION_PREFIXES = (
+    "what ", "what's ", "whats ",
+    "can you ", "can it ", "can this ", "can the ",
+    "could you ", "could it ",
+    "how does ", "how do ", "how would ", "how can ",
+    "why does ", "why do ",
+    "does it ", "does this ", "does the ",
+    "is it ", "is this ", "is the ",
+    "tell me about", "tell me what",
+    "will it ", "will this ", "will you ",
+    "would it ", "would this ", "would you ",
+    "are there ", "are these ",
+    "which ",
+)
+
+
+def _looks_like_meta_question(args: str) -> bool:
+    """Heuristic: do the args look like a question *about* the skill rather
+    than a task *for* the skill?
+
+    Used to pick between the strict follow-through template (execute the
+    procedure) and the softer explain template (answer the question using
+    the loaded skill content). Intentionally conservative — a false
+    negative (treating a meta-question as a task) preserves current
+    behavior; a false positive (treating a task as a meta-question) could
+    cause the model to describe the skill instead of doing work, which is
+    worse.
+    """
+    if not args:
+        return False
+    lowered = args.strip().lower()
+    if not lowered:
+        return False
+    # Only the prefix list. A trailing "?" is NOT sufficient on its own —
+    # task args can legitimately contain or end with a question (e.g.
+    # /translate How are you doing?, /write-email reply to Sam asking
+    # "did we ship yet?"). A misclassification here causes the model to
+    # describe the skill instead of running it, which produces
+    # hallucinated content — the worst failure mode. Prefer false
+    # negatives (treat meta-question as task, run the procedure) over
+    # false positives.
+    for prefix in _META_QUESTION_PREFIXES:
+        if lowered.startswith(prefix):
+            return True
+    return False
+
+
+# Softer follow-through used on the "loaded" turn when the user's args look
+# like a question *about* the skill. The skill's content has already been
+# injected into context by Claude Code; the model's job is to answer the
+# question using that content, not to run the procedure as if the question
+# were a task.
+SLASH_COMMAND_META_ANSWER_TEMPLATE = (
+    "\n\n[Krull Skill Question]\n"
+    "The /{skill_name} skill content has just loaded. The user's input "
+    "looks like a QUESTION about this skill rather than a task for it:\n"
+    "    {args}\n"
+    "\n"
+    "Answer the user's question directly, using:\n"
+    "  - The skill's description and instructions that just loaded above\n"
+    "  - Any reference files in the skill's directory, if the question "
+    "needs details the description doesn't cover (read them with Read, "
+    "don't guess)\n"
+    "  - The skill's actual capabilities as described — not your "
+    "assumptions about what a skill with this name might do\n"
+    "\n"
+    "Do NOT:\n"
+    "  - Execute the skill's procedure as if the question were a task "
+    "to run. The user is asking ABOUT the skill, not asking it to do "
+    "work. Running the procedure here would be a mismatch.\n"
+    "  - Refuse to answer because the procedure doesn't obviously apply. "
+    "The question is answerable from the skill's description and "
+    "reference files.\n"
+    "  - Invent capabilities the skill doesn't document. If the skill's "
+    "files don't answer the question, say so plainly.\n"
+    "[End Krull Skill Question]"
+)
+
 
 # Condensed recency reminder injected as a system message near the END
 # of the messages array when the full followthrough directive (above) is
@@ -587,6 +708,24 @@ SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE = (
 # (right before the model generates) so it lands in the highest-attention
 # slot. It's a condensed version — just enough for the model to know
 # what it's supposed to be doing and that it should NOT stop early.
+# Compact forcing directive injected at END of messages on every "loaded"
+# turn for non-meta inputs. Complements the main SLASH_COMMAND_FOLLOWTHROUGH
+# directive (appended to the user message, ~2042 chars) by putting the
+# single most important instruction — "don't refuse, run the procedure" —
+# in the highest-attention slot. Empirically: the 9B model sometimes
+# refuses the user's input as "out of scope" on the loaded turn despite the
+# followthrough's explicit anti-refusal clause being in context. The
+# clause was getting drowned in the larger directive. This short reminder
+# lands right before the model generates, where it cannot be ignored.
+SLASH_COMMAND_FORCING_DIRECTIVE = (
+    "[Skill Execution — Next Action]\n"
+    "Executing /{skill_name} on: {args}\n"
+    "\n"
+    "Your next action MUST be a tool call advancing the procedure. "
+    "Not a refusal. Not a menu. Not a meta-comment about scope.\n"
+    "[End Skill Execution]"
+)
+
 RECENCY_REMINDER_THRESHOLD = 15  # messages between user msg and end
 SLASH_COMMAND_RECENCY_REMINDER = (
     "[Active Skill — Continue Working]\n"
@@ -647,6 +786,8 @@ def inject_slash_command_protocol(messages: list) -> list:
         return messages
     if "[Krull Skill Follow-Through]" in flat_text:
         return messages
+    if "[Krull Skill Question]" in flat_text:
+        return messages
 
     # Pick the right template for this shape
     escaped_args = args.replace('"', '\\"')
@@ -656,10 +797,16 @@ def inject_slash_command_protocol(messages: list) -> list:
         )
         log_label = "+slash_command_protocol"
     else:  # shape == "loaded"
-        directive = SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE.format(
-            skill_name=skill_name, args=escaped_args
-        )
-        log_label = "+slash_command_followthrough"
+        if _looks_like_meta_question(args):
+            directive = SLASH_COMMAND_META_ANSWER_TEMPLATE.format(
+                skill_name=skill_name, args=escaped_args
+            )
+            log_label = "+slash_command_meta_answer"
+        else:
+            directive = SLASH_COMMAND_FOLLOWTHROUGH_TEMPLATE.format(
+                skill_name=skill_name, args=escaped_args
+            )
+            log_label = "+slash_command_followthrough"
 
     # Modify the message in place, preserving the original content format
     new_msg = dict(messages[last_user_idx])
@@ -698,8 +845,12 @@ def inject_slash_command_protocol(messages: list) -> list:
     # a second user message with the skill content, which can be close
     # to the end. Only fire the reminder when the user message is
     # genuinely far from the generation point.
+    # Skip the recency reminder for meta-question turns — the reminder
+    # pushes "continue working / follow the procedure", which is wrong
+    # when the user's input is a question about the skill.
     distance = len(messages) - 1 - last_user_idx
-    if shape == "loaded" and distance >= RECENCY_REMINDER_THRESHOLD:
+    if shape == "loaded" and distance >= RECENCY_REMINDER_THRESHOLD \
+            and not _looks_like_meta_question(args):
         reminder = SLASH_COMMAND_RECENCY_REMINDER.format(
             skill_name=skill_name, args=escaped_args
         )
@@ -709,7 +860,387 @@ def inject_slash_command_protocol(messages: list) -> list:
                   data={"skill": skill_name, "distance": distance,
                         "chars": len(reminder)})
 
+    # Forcing directive: fires on EVERY loaded turn for non-meta inputs
+    # regardless of distance. Short, placed at end-of-messages for
+    # maximum attention. Complements the longer followthrough directive
+    # by putting the anti-refusal instruction in the highest-attention
+    # slot. Skipped on meta-question turns (model is answering, not
+    # executing). Idempotent: only fire if not already present.
+    if shape == "loaded" and not _looks_like_meta_question(args):
+        already_has = any(
+            m.get("role") == "system"
+            and "[Skill Execution — Next Action]" in _content_text(m.get("content", ""))
+            for m in messages
+        )
+        if not already_has:
+            forcing = SLASH_COMMAND_FORCING_DIRECTIVE.format(
+                skill_name=skill_name, args=escaped_args
+            )
+            messages.append({"role": "system", "content": forcing})
+            proxy_log("FILTER", f"+slash_command_forcing (/{skill_name}, "
+                      f"+{len(forcing)} chars at end)",
+                      data={"skill": skill_name, "chars": len(forcing)})
+
+        # Active-skill resource manifest: when the skill body has just
+        # loaded, the project context message goes static and drops the
+        # discovery listing (chars dropped to ~360). The model loses
+        # sight of the skill's resource layout exactly when it most
+        # needs to plan which sub-resources to consult. Re-surface a
+        # manifest scoped to the active skill — same discovery principle
+        # Claude Code uses pre-invocation, applied to the post-invocation
+        # turn. Generic: lists whatever subdirs the skill author created,
+        # no special-casing of names.
+        already_has_manifest = any(
+            m.get("role") == "system"
+            and "[Active Skill Resources]" in _content_text(m.get("content", ""))
+            for m in messages
+        )
+        if not already_has_manifest:
+            manifest_text = _build_active_skill_manifest(
+                _content_text(raw_content), skill_name,
+            )
+            if manifest_text:
+                messages.append({"role": "system", "content": manifest_text})
+                proxy_log("FILTER", f"+active_skill_manifest (/{skill_name}, "
+                          f"+{len(manifest_text)} chars at end)",
+                          data={"skill": skill_name, "chars": len(manifest_text)})
+
+        # BM25-retrieved top-K passages from the skill's markdown, scored
+        # against the user's query (the skill args). Mechanical IR: no
+        # LLM digest, no directory heuristics, no content-type bias.
+        # Purpose: when the model must discriminate among sibling files
+        # to find a pattern or idiom, put the likely-matching passages
+        # directly in context so the model matches text-to-text rather
+        # than filename-to-input. Bounded to stay under the qwen-9B
+        # working-attention ceiling (~28K token cap).
+        already_has_hits = any(
+            m.get("role") == "system"
+            and "[Active Skill Passages]" in _content_text(m.get("content", ""))
+            for m in messages
+        )
+        if not already_has_hits and args:
+            passages_text, hits = _build_active_skill_passages(
+                _content_text(raw_content), skill_name, args,
+            )
+            if passages_text:
+                messages.append({"role": "system", "content": passages_text})
+                proxy_log("FILTER", f"+active_skill_passages (/{skill_name}, "
+                          f"{len(hits)} chunks, +{len(passages_text)} chars)",
+                          data={"skill": skill_name,
+                                "chunks": len(hits),
+                                "chars": len(passages_text),
+                                "top_paths": [h for h in hits]})
+
     return messages
+
+
+_PASSAGE_SKIP_NAMES = {
+    "__pycache__", "node_modules", ".venv", "venv", ".git",
+    "dist", "build", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+}
+_PASSAGE_MARKDOWN_SUFFIXES = (".md", ".markdown")
+_PASSAGE_MAX_DEPTH = 4
+_PASSAGE_CHUNK_MIN_BYTES = 80
+_PASSAGE_CHUNK_MAX_BYTES = 1500
+_PASSAGE_TOP_K = 3
+_PASSAGE_TOTAL_BYTES_MAX = 4500
+
+_PASSAGE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-]*")
+
+
+def _tokenize_for_bm25(text: str) -> list[str]:
+    """Lowercase alphanumeric-run tokenizer. Keeps hyphenated tokens
+    intact (e.g. 'cache-read'). No stopword filter — BM25's IDF already
+    down-weights common terms, and hard stopword removal can kill
+    short-query matches (e.g. 'how are you' against greetings chunks
+    when how/are/you are all filtered). ASCII-only by design: non-ASCII
+    scripts are visible literally in the passage body but don't
+    participate in BM25 scoring."""
+    return [
+        t for t in (m.group(0).lower() for m in _PASSAGE_TOKEN_RE.finditer(text))
+        if len(t) > 1
+    ]
+
+
+def _split_markdown_into_chunks(path: Path, rel_path: str) -> list[dict]:
+    """Split a markdown file into heading-anchored chunks. Each chunk
+    carries the text body, file-relative line range, and the heading
+    path it sits under. Chunks larger than the max byte cap are
+    further split on paragraph boundaries."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = raw.splitlines()
+    chunks: list[dict] = []
+    heading_stack: list[str] = []
+    buf: list[str] = []
+    buf_start = 1
+    buf_heading: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        body = "\n".join(buf).strip()
+        if len(body) < _PASSAGE_CHUNK_MIN_BYTES:
+            return
+        segments = _split_oversize_chunk(body) if len(body) > _PASSAGE_CHUNK_MAX_BYTES else [body]
+        offset = 0
+        for seg in segments:
+            if len(seg) < _PASSAGE_CHUNK_MIN_BYTES:
+                continue
+            start_line = buf_start + offset
+            end_line = start_line + seg.count("\n")
+            chunks.append({
+                "rel_path": rel_path,
+                "heading": " › ".join(buf_heading) if buf_heading else "(top)",
+                "start_line": start_line,
+                "end_line": end_line,
+                "body": seg,
+            })
+            offset += seg.count("\n") + 1
+
+    for i, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            flush()
+            buf = []
+            buf_start = i
+            level = len(stripped) - len(stripped.lstrip("#"))
+            title = stripped.lstrip("#").strip()
+            heading_stack = heading_stack[: max(0, level - 1)] + [title]
+            buf_heading = list(heading_stack)
+            continue
+        if not buf:
+            buf_start = i
+            buf_heading = list(heading_stack)
+        buf.append(line)
+    flush()
+    return chunks
+
+
+def _split_oversize_chunk(body: str) -> list[str]:
+    """Split a chunk larger than the max cap on blank lines, then fall
+    back to single-line segments if no paragraph break helps."""
+    paragraphs = re.split(r"\n\s*\n", body)
+    out: list[str] = []
+    current = ""
+    for para in paragraphs:
+        candidate = (current + "\n\n" + para).strip() if current else para.strip()
+        if len(candidate) <= _PASSAGE_CHUNK_MAX_BYTES:
+            current = candidate
+        else:
+            if current:
+                out.append(current)
+            if len(para) <= _PASSAGE_CHUNK_MAX_BYTES:
+                current = para.strip()
+            else:
+                for line in para.splitlines():
+                    if line.strip():
+                        out.append(line.strip()[:_PASSAGE_CHUNK_MAX_BYTES])
+                current = ""
+    if current:
+        out.append(current)
+    return out
+
+
+def _iter_skill_markdown_for_passages(base: Path) -> list[tuple[Path, str]]:
+    """Depth-bounded walk yielding (path, rel_path) for every markdown
+    file under the skill tree. No skill-specific name is filtered."""
+    results: list[tuple[Path, str]] = []
+
+    def walk(dir_path: Path, depth: int) -> None:
+        if depth > _PASSAGE_MAX_DEPTH:
+            return
+        try:
+            entries = sorted(dir_path.iterdir(), key=lambda p: p.name.lower())
+        except (PermissionError, OSError):
+            return
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in _PASSAGE_SKIP_NAMES:
+                continue
+            if entry.is_dir():
+                walk(entry, depth + 1)
+            elif entry.is_file() and entry.suffix.lower() in _PASSAGE_MARKDOWN_SUFFIXES:
+                try:
+                    rel = str(entry.relative_to(base))
+                except ValueError:
+                    continue
+                results.append((entry, rel))
+
+    walk(base, 0)
+    return results
+
+
+def _bm25_score(
+    query_tokens: list[str],
+    chunks: list[dict],
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> list[tuple[float, dict]]:
+    """Standard BM25 scoring across pre-tokenized chunks. Chunks must
+    have a `tokens` field set before calling. Returns (score, chunk)
+    pairs sorted high-to-low."""
+    if not chunks or not query_tokens:
+        return []
+    n_docs = len(chunks)
+    avgdl = sum(len(c["tokens"]) for c in chunks) / n_docs if n_docs else 0
+    query_set = set(query_tokens)
+    df: dict[str, int] = {}
+    for c in chunks:
+        for t in set(c["tokens"]) & query_set:
+            df[t] = df.get(t, 0) + 1
+    import math
+    idf = {
+        t: math.log((n_docs - df.get(t, 0) + 0.5) / (df.get(t, 0) + 0.5) + 1)
+        for t in query_set
+    }
+    scored: list[tuple[float, dict]] = []
+    for c in chunks:
+        dl = len(c["tokens"])
+        if dl == 0:
+            continue
+        tf_counts: dict[str, int] = {}
+        for t in c["tokens"]:
+            if t in query_set:
+                tf_counts[t] = tf_counts.get(t, 0) + 1
+        score = 0.0
+        for t, tf in tf_counts.items():
+            numer = tf * (k1 + 1)
+            denom = tf + k1 * (1 - b + b * dl / avgdl) if avgdl else tf + k1
+            score += idf.get(t, 0.0) * numer / denom
+        if score > 0:
+            scored.append((score, c))
+    scored.sort(key=lambda x: -x[0])
+    return scored
+
+
+def _build_active_skill_passages(
+    loaded_content: str, skill_name: str, query: str,
+) -> tuple[str, list[str]]:
+    """BM25-retrieve the top-K passages from the active skill's markdown
+    against the user's query. Returns (injected_text, list_of_rel_paths).
+    Pure IR: chunks are heading-anchored sections of the author's own
+    markdown, scoring is standard BM25, no directory or filename
+    heuristics enter the ranking."""
+    cleaned = _strip_system_reminders(loaded_content)
+    m = _LOADED_SKILL_FULL_PATH_RE.search(cleaned)
+    if not m:
+        return "", []
+    base = Path(m.group(1).strip())
+    if not base.is_dir():
+        return "", []
+    query_tokens = _tokenize_for_bm25(query)
+    if not query_tokens:
+        return "", []
+
+    all_chunks: list[dict] = []
+    for path, rel in _iter_skill_markdown_for_passages(base):
+        for ch in _split_markdown_into_chunks(path, rel):
+            ch["tokens"] = _tokenize_for_bm25(ch["body"])
+            all_chunks.append(ch)
+    if not all_chunks:
+        return "", []
+
+    ranked = _bm25_score(query_tokens, all_chunks)
+    if not ranked:
+        return "", []
+
+    selected: list[dict] = []
+    total_bytes = 0
+    seen_paths: set[str] = set()
+    for score, ch in ranked:
+        if len(selected) >= _PASSAGE_TOP_K:
+            break
+        body_len = len(ch["body"])
+        if total_bytes + body_len > _PASSAGE_TOTAL_BYTES_MAX and selected:
+            break
+        key = (ch["rel_path"], ch["start_line"])
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        ch["score"] = score
+        selected.append(ch)
+        total_bytes += body_len
+
+    if not selected:
+        return "", []
+
+    blocks: list[str] = []
+    paths: list[str] = []
+    for ch in selected:
+        header = (
+            f"----- {ch['rel_path']}:{ch['start_line']}-{ch['end_line']} "
+            f"[{ch['heading']}] score={ch['score']:.2f} -----"
+        )
+        blocks.append(f"{header}\n{ch['body']}")
+        paths.append(f"{ch['rel_path']}:{ch['start_line']}")
+
+    body = (
+        f"[Active Skill Passages]\n"
+        f"BM25 retrieval on query {query!r} over the /{skill_name} "
+        f"skill's markdown returned these top {len(selected)} passages. "
+        f"Scoring is mechanical (query-term frequency + inverse document "
+        f"frequency); ranking has no knowledge of file or directory names. "
+        f"Treat these as relevant candidates, not authoritative — verify "
+        f"by reading the cited file:line ranges when you cite them.\n\n"
+        + "\n\n".join(blocks)
+        + "\n[End Active Skill Passages]"
+    )
+    return body, paths
+
+
+def _build_active_skill_manifest(loaded_content: str, skill_name: str) -> str:
+    """Return a short system-message body listing the active skill's
+    top-level subdirectories with file counts. Reads the skill's base
+    directory from disk via the path Claude Code embeds in the loaded
+    content. Returns empty string if the path can't be located or the
+    directory has no useful structure."""
+    cleaned = _strip_system_reminders(loaded_content)
+    m = _LOADED_SKILL_FULL_PATH_RE.search(cleaned)
+    if not m:
+        return ""
+    base = Path(m.group(1).strip())
+    if not base.is_dir():
+        return ""
+    try:
+        sub_entries = sorted(base.iterdir())
+    except (PermissionError, OSError):
+        return ""
+    lines = []
+    for sub in sub_entries:
+        if not sub.is_dir() or sub.name.startswith("."):
+            continue
+        try:
+            files = [p for p in sub.iterdir() if p.is_file()]
+        except (PermissionError, OSError):
+            continue
+        if not files:
+            continue
+        ext_counts: dict[str, int] = {}
+        for f in files:
+            ext = f.suffix.lower() or "(noext)"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        ext_summary = ", ".join(
+            f"{n} {e.lstrip('.') or '(noext)'}"
+            for e, n in sorted(ext_counts.items(), key=lambda kv: -kv[1])
+        )
+        lines.append(f"  - {sub.name}/  ({ext_summary})")
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    return (
+        f"[Active Skill Resources]\n"
+        f"The /{skill_name} skill body has loaded. Its top-level "
+        f"resource layout on disk is:\n"
+        f"{body}\n"
+        f"\n"
+        f"Read, Glob, or Grep these as the skill's procedure directs. "
+        f"When the procedure references a category of resource by name "
+        f"without listing exact filenames, the matching subdirectory "
+        f"above is where to look.\n"
+        f"[End Active Skill Resources]"
+    )
 
 
 def _history_has_task_create(messages: list) -> bool:
@@ -1122,6 +1653,387 @@ def _has_substantial_text_answer(messages: list) -> bool:
         if len(content) > 500:
             return True
     return False
+
+
+# ── Grounded-answer pass (structured-output fabrication guard) ──────────
+#
+# Generic small-model fabrication guard, modeled on Claude Code's
+# SyntheticOutputTool (tools/SyntheticOutputTool/SyntheticOutputTool.ts).
+# That tool dynamically constructs a JSON schema and forces the model to
+# call it as the final action — schema validation guarantees the output
+# shape regardless of what the model would have free-text-generated.
+#
+# We use the same mechanism (Ollama's `format` parameter, empirically
+# confirmed to enforce JSON schema on qwen 9B without skill-specific
+# coupling) at the moment the model is expected to produce its final
+# answer. The schema is universal:
+#
+#   {answer: string, sources_used: [string, ...]}
+#
+# `sources_used` is the structural pressure: the model must commit to
+# which tool result content backs its answer. The proxy then verifies
+# each cited string is a real substring of any tool result in the
+# conversation. Citations that don't match real content are flagged.
+#
+# Why this passes the structural test:
+#   - Schema is content-type-agnostic (works for translation, code review,
+#     math, writing — every skill has answers and may or may not cite
+#     tool results)
+#   - No skill-shape assumption (no procedure parsing, no subdir
+#     enforcement, no required helper invocation)
+#   - Citation verification is mechanical (substring match), no semantic
+#     judgment from the proxy or any model
+#   - Skill-author opt-in not required — proxy applies universally
+#
+# Trigger: the same condition that fires synthesis_directive (model has
+# substantial tool results AND has not yet produced a substantial text
+# answer). That's the structural moment "the model should be answering
+# now."
+#
+# The pass converts the conversation history (assistant tool_calls + tool
+# messages) into flattened user/assistant text messages because Ollama on
+# qwen 9B returns empty content when format=schema is combined with the
+# tool-call message format. Empirically verified during design.
+
+GROUNDED_ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {
+            "type": "string",
+            "description": (
+                "The response to the user's original request. Must be "
+                "complete, specific, and grounded in the tool results "
+                "from this conversation. If you cannot answer from the "
+                "tool results, say so plainly here."
+            ),
+        },
+        "sources_used": {
+            "type": "array",
+            "description": (
+                "Verbatim substrings copied from earlier tool results "
+                "that support the claims in `answer`. Each entry must "
+                "be a literal copy of text that appeared in a tool "
+                "result above. Empty array means the answer is not "
+                "grounded in any tool result (i.e. it relies on prior "
+                "knowledge or is uncertain)."
+            ),
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["answer", "sources_used"],
+}
+
+
+def _should_force_grounded_answer(messages: list) -> bool:
+    """Fires only after the model has done multiple turns of tool work
+    AND accumulated substantial results. Stricter than
+    inject_synthesis_directive (which fires on the first large result)
+    because grounded enforcement strips the tools, so we must be sure
+    the model has had real opportunity to do its lookup work first."""
+    if _has_substantial_text_answer(messages):
+        return False
+    tool_turns = sum(
+        1 for m in messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    if tool_turns < 4:
+        return False
+    substantial = _count_substantial_tool_results(messages)
+    return substantial >= 2
+
+
+def _flatten_messages_for_format(messages: list) -> list:
+    """Convert a conversation that uses tool_calls + role=tool messages
+    into one that uses only role=user / role=assistant / role=system
+    text messages. Required because Ollama's format=schema combined
+    with the tool-call message format returns empty content on qwen
+    9B (verified empirically)."""
+    out = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            content = _content_text(m.get("content", ""))
+            tcid = m.get("tool_call_id", "")
+            out.append({
+                "role": "user",
+                "content": f"[Tool result for {tcid or '<call>'}]:\n{content}",
+            })
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            text_content = _content_text(m.get("content", ""))
+            tc_descriptions = []
+            for tc in m["tool_calls"]:
+                func = tc.get("function") or {}
+                name = func.get("name", "")
+                args = func.get("arguments", "")
+                if isinstance(args, dict):
+                    args = json.dumps(args)
+                tc_descriptions.append(f"  - {name}({str(args)[:200]})")
+            tc_text = "\n".join(tc_descriptions)
+            combined = (text_content + "\n" if text_content else "") + (
+                f"[Called tools]\n{tc_text}" if tc_descriptions else ""
+            )
+            out.append({"role": "assistant", "content": combined or "(tool call)"})
+            continue
+        # Plain message — pass through (system / user / assistant text-only)
+        out.append({
+            "role": role,
+            "content": _content_text(m.get("content", "")),
+        })
+    return out
+
+
+def _collect_tool_result_text(messages: list) -> str:
+    """Concatenate all tool result content. Used to verify citations
+    via substring match."""
+    out = []
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        out.append(_content_text(m.get("content", "")))
+    return "\n".join(out)
+
+
+def _verify_citations(sources_used: list, all_tool_text: str) -> tuple[int, int]:
+    """Return (verified_count, total_count). A citation is verified if
+    it appears verbatim (case-sensitive substring) in the concatenated
+    tool result text. Empty/whitespace citations don't count."""
+    verified = 0
+    total = 0
+    for src in sources_used or []:
+        if not isinstance(src, str):
+            continue
+        s = src.strip()
+        if not s or len(s) < 3:
+            continue
+        total += 1
+        if s in all_tool_text:
+            verified += 1
+    return verified, total
+
+
+async def _ollama_grounded_answer_call(
+    flattened_messages: list, model: str, num_ctx: int,
+) -> dict | None:
+    """Make a synchronous (non-streaming) Ollama call with format=schema
+    and no tools. Returns parsed JSON dict on success, None on failure."""
+    body = {
+        "model": model,
+        "messages": flattened_messages,
+        "stream": False,
+        "format": GROUNDED_ANSWER_SCHEMA,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": num_ctx,
+            "num_predict": 1500,
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+            resp = await client.post(f"{OLLAMA_URL}/api/chat", json=body)
+            if resp.status_code >= 400:
+                return None
+            data = resp.json()
+            content = data.get("message", {}).get("content", "")
+            if not isinstance(content, str) or not content.strip():
+                return None
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                return None
+    except (httpx.RequestError, json.JSONDecodeError, ValueError):
+        return None
+
+
+# ── Procedure map (mechanical structure exposure) ───────────────────────
+#
+# Generic skill-content navigation aid. When the model Reads a markdown
+# file from inside the active skill tree, the proxy mechanically parses
+# that file's structure (headers, links, inline file paths, code-block
+# invocations) and prepends a compact "Procedure Map" to the tool
+# result. The model sees the parsed structure alongside the raw content.
+#
+# Why this passes the structural test:
+#   - The proxy makes NO decision about what's load-bearing. It parses
+#     what the file itself documents and exposes that structure.
+#   - Markdown parsing is universal — works for any procedure file in
+#     any skill. Skills that don't have markdown files in their tree
+#     get nothing.
+#   - References are filesystem-verified before being surfaced (drops
+#     hallucinated examples in prose, drops external links).
+#   - Maps are EXPOSURE, not enforcement. The model decides what to do
+#     with the navigation aid. No nudges, no pushes, no thresholds.
+#   - Modeled on Claude Code's post-tool hooks pattern
+#     (services/tools/toolHooks.ts:runPostToolUseHooks) — same shape:
+#     enrich the result before the model consumes it.
+#
+# Idempotency: the prepend includes a marker `[Procedure Map`. Subsequent
+# turns detect the marker and skip re-prepending.
+
+# Markdown structural patterns (mechanical, no semantic interpretation)
+_PM_HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+_PM_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+_PM_INLINE_PATH_RE = re.compile(
+    r"(?<![/\w.])([a-zA-Z_][\w-]+(?:/[a-zA-Z_][\w.-]*)+\.[a-zA-Z][\w-]*)"
+    r"(?![\w.])"
+)
+# Require an explicit shell-language hint. Code blocks without a hint
+# tend to be illustrative content (examples, sample output, interlinear
+# glosses) and surface as false-positive "invocations" otherwise.
+_PM_CODE_BLOCK_RE = re.compile(
+    r"```(?:bash|sh|zsh|shell)\s*\n([^\n].*?)\n```", re.DOTALL
+)
+
+
+def _build_procedure_map(content: str, skill_resolved: Path) -> str:
+    """Mechanically extract structural elements from markdown content.
+    Returns a compact map block, or empty string if nothing useful
+    found."""
+    if not content or len(content) < 100:
+        return ""
+
+    # Section headings (top 3 levels only — deeper is detail noise)
+    headers = []
+    for m in _PM_HEADER_RE.finditer(content):
+        if len(m.group(1)) > 3:
+            continue
+        h = m.group(2).strip().rstrip("#").strip()
+        if h and h not in headers:
+            headers.append(h)
+
+    # Cross-referenced files: markdown links + inline path tokens.
+    # Filter to those that actually exist inside the skill tree.
+    candidate_refs: set[str] = set()
+    for m in _PM_MD_LINK_RE.finditer(content):
+        candidate_refs.add(m.group(1).strip())
+    for m in _PM_INLINE_PATH_RE.finditer(content):
+        candidate_refs.add(m.group(1).strip())
+
+    verified_refs = []
+    for r in sorted(candidate_refs):
+        # External URL — skip
+        if "://" in r:
+            continue
+        # Try as relative path inside skill
+        try:
+            cand = (skill_resolved / r).resolve()
+            cand.relative_to(skill_resolved)
+        except (ValueError, OSError):
+            continue
+        if cand.exists():
+            verified_refs.append(r)
+
+    # Shell invocations from fenced code blocks (first non-comment line)
+    invocations = []
+    for m in _PM_CODE_BLOCK_RE.finditer(content):
+        block = m.group(1).strip()
+        for line in block.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#"):
+                if line not in invocations:
+                    invocations.append(line[:200])
+                break
+
+    if not headers and not verified_refs and not invocations:
+        return ""
+
+    parts = ["[Procedure Map — mechanically extracted from this file]"]
+    if headers:
+        if len(headers) > 12:
+            line = "; ".join(headers[:12]) + f"; …(+{len(headers) - 12} more)"
+        else:
+            line = "; ".join(headers)
+        parts.append(f"Sections: {line}")
+    if verified_refs:
+        if len(verified_refs) > 10:
+            line = ", ".join(verified_refs[:10]) + f", …(+{len(verified_refs) - 10} more)"
+        else:
+            line = ", ".join(verified_refs)
+        parts.append(f"In-tree references (verified to exist): {line}")
+    if invocations:
+        if len(invocations) > 5:
+            line = "; ".join(invocations[:5]) + f"; …(+{len(invocations) - 5} more)"
+        else:
+            line = "; ".join(invocations)
+        parts.append(f"Code-block invocations: {line}")
+    parts.append("[End Procedure Map]")
+    return "\n".join(parts)
+
+
+def _active_skill_base_for_maps(messages: list) -> Path | None:
+    """Same logic as _find_active_skill_base but local to this filter
+    so its lifecycle is independent."""
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        text = _content_text(m.get("content", ""))
+        cleaned = _strip_system_reminders(text)
+        match = _LOADED_SKILL_FULL_PATH_RE.search(cleaned)
+        if match:
+            base = Path(match.group(1).strip())
+            if base.is_dir():
+                return base
+    return None
+
+
+def inject_procedure_maps(messages: list) -> list:
+    """For every tool message that holds the result of a Read against a
+    markdown file inside the active skill tree, prepend a mechanically-
+    extracted Procedure Map. Idempotent (skips messages already mapped).
+    Generic across all skills."""
+    skill_base = _active_skill_base_for_maps(messages)
+    if skill_base is None:
+        return messages
+    skill_resolved = skill_base.resolve()
+
+    augmented = 0
+    for i, m in enumerate(messages):
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls", []) or []:
+            func = tc.get("function") if isinstance(tc, dict) else None
+            if not isinstance(func, dict) or func.get("name") != "Read":
+                continue
+            try:
+                args = func.get("arguments") or "{}"
+                args = json.loads(args) if isinstance(args, str) else args
+            except (json.JSONDecodeError, TypeError):
+                continue
+            fp = (args or {}).get("file_path", "")
+            if not isinstance(fp, str) or not fp.endswith(".md"):
+                continue
+            try:
+                resolved = Path(fp).resolve()
+                resolved.relative_to(skill_resolved)
+            except (ValueError, OSError):
+                continue
+            tcid = tc.get("id")
+            if not tcid:
+                continue
+            for j in range(i + 1, len(messages)):
+                rm = messages[j]
+                if rm.get("role") != "tool":
+                    continue
+                if rm.get("tool_call_id") != tcid:
+                    continue
+                content = _content_text(rm.get("content", ""))
+                if not content or "[Procedure Map" in content:
+                    break
+                map_text = _build_procedure_map(content, skill_resolved)
+                if not map_text:
+                    break
+                new_rm = dict(rm)
+                new_rm["content"] = f"{map_text}\n\n{content}"
+                messages[j] = new_rm
+                augmented += 1
+                break
+    if augmented:
+        proxy_log(
+            "FILTER",
+            f"+procedure_maps ({augmented} markdown tool result(s) augmented)",
+            data={"augmented": augmented},
+        )
+    return messages
 
 
 def inject_synthesis_directive(messages: list) -> list:
@@ -2664,28 +3576,41 @@ def _discover_skills_in_dir(skills_dir: Path) -> list[dict]:
         except OSError:
             continue
         fm = _read_skill_frontmatter(skill_md)
-        # Convention: lib/*.sh deterministic helpers, references/*.md procedure
-        helpers = []
-        lib_dir = entry / "lib"
-        if lib_dir.is_dir():
+        # Generic top-level resource manifest: list every subdirectory of the
+        # skill with its file count grouped by extension. No special-casing
+        # of subdir names — surfaces whatever the skill author put there
+        # (lib/, references/, grammar/, library/, examples/, …) so the
+        # model can decide which to consult based on the procedure's own
+        # words rather than the proxy's assumptions about layout.
+        resources = []
+        try:
+            sub_entries = sorted(entry.iterdir())
+        except (PermissionError, OSError):
+            sub_entries = []
+        for sub in sub_entries:
+            if not sub.is_dir() or sub.name.startswith("."):
+                continue
             try:
-                helpers = sorted(p.name for p in lib_dir.glob("*.sh"))
-            except OSError:
-                helpers = []
-        procedures = []
-        ref_dir = entry / "references"
-        if ref_dir.is_dir():
-            try:
-                procedures = sorted(p.name for p in ref_dir.glob("*-procedure.md"))
-            except OSError:
-                procedures = []
+                files = [p for p in sub.iterdir() if p.is_file()]
+            except (PermissionError, OSError):
+                continue
+            if not files:
+                continue
+            ext_counts: dict[str, int] = {}
+            for f in files:
+                ext = f.suffix.lower() or "(noext)"
+                ext_counts[ext] = ext_counts.get(ext, 0) + 1
+            ext_summary = ", ".join(
+                f"{n} {e.lstrip('.')}" if e.startswith(".") else f"{n} {e}"
+                for e, n in sorted(ext_counts.items(), key=lambda kv: -kv[1])
+            )
+            resources.append({"name": sub.name, "summary": ext_summary})
         skills.append({
             "name": fm.get("name") or entry.name,
             "description": fm.get("description", ""),
             "whenToUse": fm.get("whenToUse", ""),
             "dir": str(entry),
-            "helpers": helpers,
-            "procedures": procedures,
+            "resources": resources,
             "_inode": inode_key,
         })
     return skills
@@ -2765,13 +3690,19 @@ def format_skill_listing(skills: list[dict], budget_chars: int) -> str:
     return "\n".join(f"- {s['name']}" for s in skills)
 
 
-def format_helpers_section(skills: list[dict]) -> str:
-    """List skills that ship deterministic helpers (lib/*.sh)."""
+def format_resources_section(skills: list[dict]) -> str:
+    """For each skill that has any top-level subdirectories with files,
+    list them so the model knows what's inside the skill before reading
+    its body. Generic — no special-casing of directory names. Mirrors
+    the discovery principle in tools/SkillTool/prompt.ts (lightweight
+    pre-invocation visibility) but extended to the skill's own layout."""
     lines = []
     for s in skills:
-        if s.get("helpers"):
-            joined = ", ".join(s["helpers"])
-            lines.append(f"- {s['name']} ships lib/{{{joined}}}")
+        resources = s.get("resources") or []
+        if not resources:
+            continue
+        joined = ", ".join(f"{r['name']}/ ({r['summary']})" for r in resources)
+        lines.append(f"- {s['name']}: {joined}")
     return "\n".join(lines)
 
 
@@ -2821,15 +3752,15 @@ class ProjectContext:
     def full_message(self, budget_chars: int) -> str:
         """Full message including the skill listing. Used on turn 1."""
         listing = format_skill_listing(self.skills, budget_chars)
-        helpers = format_helpers_section(self.skills)
+        resources = format_resources_section(self.skills)
         parts = self._header()
         if listing:
             parts += ["", "Available skills:", listing]
-        if helpers:
+        if resources:
             parts += [
                 "",
-                "Skill helpers known to this proxy (deterministic, runnable directly):",
-                helpers,
+                "Skill resources (top-level subdirectories visible to the proxy — read or list these as the skill's procedure directs):",
+                resources,
             ]
         parts += self._footer()
         return "\n".join(parts)
@@ -3045,6 +3976,7 @@ async def apply_filters(
             messages = await inject_web_search(messages)
     messages = inject_project_context(messages)
     messages = inject_slash_command_protocol(messages)
+    messages = inject_procedure_maps(messages)
     messages = inject_loop_break(messages)
     messages = inject_data_starvation_warning(messages)
     messages = inject_stalled_progress_warning(messages)
@@ -3640,6 +4572,93 @@ async def proxy(request: Request, path: str):
                 if tc:
                     for t in tc:
                         proxy_log("PROXY", f"    tc: {json.dumps(t)[:300]}")
+
+        # Grounded-answer interception. Fires when the model is at the
+        # structural moment for a final answer (synthesis trigger met)
+        # AND the request is in streaming mode (Claude Code's path).
+        # Replaces the upstream streaming call with a non-streaming
+        # format=schema call, then synthesizes a streaming response from
+        # the unwrapped `answer` field. Citation verification appended
+        # as an annotation. See _should_force_grounded_answer comment
+        # block for the structural rationale.
+        if is_streaming and _should_force_grounded_answer(chat_body["messages"]):
+            flattened = _flatten_messages_for_format(chat_body["messages"])
+            grounded = await _ollama_grounded_answer_call(
+                flattened, ollama_body.get("model", original_model), NUM_CTX,
+            )
+            if grounded and isinstance(grounded.get("answer"), str):
+                answer = grounded["answer"]
+                sources_used = grounded.get("sources_used") or []
+                all_tool_text = _collect_tool_result_text(chat_body["messages"])
+                verified, total = _verify_citations(sources_used, all_tool_text)
+                if total == 0:
+                    citation_note = "\n\n[Note: answer not grounded in any cited tool result]"
+                elif verified == total:
+                    citation_note = ""  # all good, no need to annotate
+                else:
+                    citation_note = (
+                        f"\n\n[Note: {verified}/{total} cited sources verified "
+                        f"against tool results; {total - verified} could not be "
+                        f"verified]"
+                    )
+                final_text = answer + citation_note
+                proxy_log(
+                    "FILTER",
+                    f"+grounded_answer (cited {total} sources, "
+                    f"{verified} verified, {len(answer)} chars)",
+                    data={"sources_total": total, "sources_verified": verified,
+                          "answer_chars": len(answer)},
+                )
+
+                adapter = StreamAdapter(
+                    f"resp_{uuid.uuid4().hex[:24]}",
+                    f"msg_{uuid.uuid4().hex[:24]}",
+                    original_model,
+                )
+                adapter.start()
+                # Feed the answer through the adapter as a single Chat
+                # Completions chunk. Adapter will emit the proper
+                # Responses API SSE events on drain.
+                adapter.feed({
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": final_text},
+                        "finish_reason": None,
+                    }],
+                })
+                adapter.feed({
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {
+                        "prompt_tokens": len(json.dumps(flattened)) // 4,
+                        "completion_tokens": len(final_text) // 4,
+                    },
+                })
+                proxy_log(
+                    "STREAM",
+                    f"done content_chars={len(final_text)} tool_calls=0 "
+                    f"(grounded)",
+                    data={"content_chars": len(final_text), "tool_calls": 0,
+                          "grounded": True},
+                )
+
+                async def stream_grounded():
+                    for et, ed in adapter.drain():
+                        yield f"event: {et}\ndata: {json.dumps(ed)}\n\n"
+
+                return StreamingResponse(
+                    stream_grounded(), media_type="text/event-stream",
+                )
+            else:
+                proxy_log(
+                    "FILTER",
+                    "+grounded_answer fallthrough (call failed or no JSON)",
+                    level="warn",
+                )
+                # Fall through to normal streaming path
 
         if is_streaming:
             ollama_body["stream"] = True
