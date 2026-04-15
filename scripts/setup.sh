@@ -196,6 +196,40 @@ install_function \
     "$FUNCTIONS_DIR/map_search.py" \
     "filter"
 
+# --- Disable auxiliary task generation ---
+# Open WebUI fires a separate /api/chat call for each of: chat title,
+# chat tags, follow-up question suggestions, and chat autocomplete.
+# On a single-GPU stack with a thinking-mode model loaded, each of those
+# triggers a full thinking trace — turning a 1-turn answer into 4-5
+# minutes of GPU work even when the answer itself was fast.
+# We disable them here. Users who want any of these can re-enable them
+# in Admin Panel > Settings > Interface.
+echo ""
+echo "Disabling auxiliary task generation (title/tags/follow-up/autocomplete)..."
+TASK_CONFIG=$(webui_api GET "/api/v1/tasks/config")
+if [ -n "$TASK_CONFIG" ] && echo "$TASK_CONFIG" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+    PATCHED=$(echo "$TASK_CONFIG" | python3 -c "
+import sys, json
+cfg = json.load(sys.stdin)
+cfg['ENABLE_TITLE_GENERATION'] = False
+cfg['ENABLE_TAGS_GENERATION'] = False
+cfg['ENABLE_FOLLOW_UP_GENERATION'] = False
+cfg['ENABLE_AUTOCOMPLETE_GENERATION'] = False
+cfg['ENABLE_RETRIEVAL_QUERY_GENERATION'] = False
+print(json.dumps(cfg))
+")
+    RESP=$(webui_api POST "/api/v1/tasks/config/update" "$PATCHED")
+    if echo "$RESP" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null >/dev/null; then
+        echo "[+] Task generation disabled"
+    else
+        echo "[!] Task config update returned unexpected response — disable manually in"
+        echo "    Admin Panel > Settings > Interface if needed."
+    fi
+else
+    echo "[!] Could not fetch task config — disable manually in"
+    echo "    Admin Panel > Settings > Interface if needed."
+fi
+
 # --- Generate API key for LiteLLM → Open WebUI connection ---
 echo ""
 echo "Configuring LiteLLM → Open WebUI API key..."
@@ -261,6 +295,13 @@ echo ""
 echo "  All filters are enabled globally."
 echo "  Adjust settings in Open WebUI:"
 echo "    Admin Panel > Functions > [filter name] > Valves"
+echo ""
+echo "  Auxiliary task generation:"
+echo "    - ALL DISABLED (titles, tags, follow-ups, autocomplete, retrieval-query)"
+echo "    - Each would fire a separate full chat call against your loaded"
+echo "      model. On a single-GPU stack with a thinking-mode model, that"
+echo "      can multiply per-turn GPU time by 3-5x. Re-enable individually"
+echo "      in Admin Panel > Settings > Interface if you want any back."
 echo ""
 echo "  Context Manager defaults:"
 echo "    - Max context: 16384 tokens"

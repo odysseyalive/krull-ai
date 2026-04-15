@@ -70,6 +70,27 @@ def _is_junk_link(link: str) -> bool:
     return any(p.search(link) for p in _JUNK_URL_PATTERNS)
 
 
+# Knowledge lookup is appropriate for factual, reference, or how-to
+# questions — not for conversational follow-ups, code-fix requests, or
+# meta-discussion of files in the project. Firing on every turn forces
+# the model to reason over 3 long snippets it never needed, which on
+# small thinking-mode models compounds into multi-minute response times.
+_KNOWLEDGE_TRIGGERS = [
+    re.compile(r"\b(?:who|what|when|where|why|how)\b", re.I),
+    re.compile(r"\b(?:explain|define|definition|meaning of|history of)\b", re.I),
+    re.compile(r"\b(?:recipe|how to|tutorial|guide|reference)\b", re.I),
+    re.compile(r"\b(?:wikipedia|encyclopedia|stack ?overflow|stack ?exchange)\b", re.I),
+    re.compile(r"\b(?:learn|teach|tell me about)\b", re.I),
+    re.compile(r"\?\s*$"),
+]
+
+
+def _wants_knowledge(text: str) -> bool:
+    if not text:
+        return False
+    return any(p.search(text) for p in _KNOWLEDGE_TRIGGERS)
+
+
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
@@ -172,6 +193,9 @@ class Filter:
         if not query or len(query.strip()) < 3:
             return body
 
+        if not _wants_knowledge(query):
+            return body
+
         # Strip stop words and conversational fillers — kiwix is a
         # keyword full-text search engine, not semantic, so a long
         # natural-language question dilutes the relevance signal.
@@ -264,17 +288,9 @@ class Filter:
             context_lines.append("[End Offline Knowledge Base]")
             context_lines.append("")
             context_lines.append(
-                "IMPORTANT: The results above come from the user's curated "
-                "offline knowledge library — books from Project Gutenberg, "
-                "Stack Exchange Q&A, dev docs, Wikipedia, and other reference "
-                "archives stored locally. These are FIRST-CLASS sources. You "
-                "MUST use them when they're relevant to the question, and you "
-                "MUST cite them inline (e.g., \"according to [Article Title]"
-                "(URL)...\") alongside any web search results that may also "
-                "appear below. If both offline knowledge and web search "
-                "return relevant results, cite BOTH in your References "
-                "section at the end of your response — do not silently drop "
-                "the offline sources in favour of the web ones."
+                "Results above come from the user's offline knowledge library "
+                "(Wikipedia, Stack Exchange, dev docs, etc). Cite any you "
+                "actually use."
             )
             context_lines.append("")
 

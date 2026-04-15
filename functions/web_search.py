@@ -4,11 +4,32 @@ Automatically searches SearXNG for every user query and injects
 the top results into the context before the model responds.
 """
 
+import re
 import urllib.parse
 import json
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
+
+
+# Web search should fire only when the query genuinely calls for live or
+# external information. Firing on every turn (including conversational
+# follow-ups, code questions, "explain this") forces the model to reason
+# over 5 injected sources it never needed, which on small thinking-mode
+# models compounds into multi-minute response times.
+_WEB_TRIGGERS = [
+    re.compile(r"\b(?:latest|recent|current|today|now|news|update|breaking)\b", re.I),
+    re.compile(r"\b(?:search|google|look up|find online|on the web)\b", re.I),
+    re.compile(r"\b(?:who is|what is|when did|where did|how many|how much)\b", re.I),
+    re.compile(r"\b(?:price|stock|score|weather|release date|version)\b", re.I),
+    re.compile(r"\?\s*$"),
+]
+
+
+def _wants_web_search(text: str) -> bool:
+    if not text:
+        return False
+    return any(p.search(text) for p in _WEB_TRIGGERS)
 
 
 class Filter:
@@ -57,6 +78,9 @@ class Filter:
         if not query or len(query.strip()) < 3:
             return body
 
+        if not _wants_web_search(query):
+            return body
+
         try:
             import aiohttp
 
@@ -97,12 +121,8 @@ class Filter:
             context_lines.append("[End Web Search Results]")
             context_lines.append("")
             context_lines.append(
-                "IMPORTANT: The search results above are LIVE results retrieved "
-                f"just now on {date_str}. This information is current and "
-                "supersedes your training data. You MUST use these results to "
-                "answer the question. Cite your sources inline (e.g., "
-                "\"according to [Title](URL)...\") and include a References "
-                "section at the end."
+                f"Live web results retrieved on {date_str}; treat as current "
+                "and supersede training data. Cite any you actually use."
             )
             context_lines.append("")
 
