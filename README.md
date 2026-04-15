@@ -109,21 +109,20 @@ The **Update** button in the top-right of the Krull Home nav (visible on every p
 
 ### First things to do
 
-1. **Pick a model.** Open the homepage's **Settings** page. The "Pick a brain" panel at the top has three recommended models — pick the one that fits your GPU (see the table below). Click "Pull & activate" or "Set as active". Krull pulls the model, wires it into the LiteLLM gateway, and restarts the gateway for you.
+1. **Pick a model.** Open the homepage's **Settings** page. The "Pick a brain" panel at the top has two recommended models — pick the one that fits your GPU (see the table below). Click "Pull & activate" or "Set as active". Krull pulls the model, wires it into the LiteLLM gateway, and restarts the gateway for you.
 2. **Install some knowledge.** From the homepage, click **Library of Alexandria**. Browse the Knowledge / Wikipedia / Maps tabs. Click Install on anything that looks useful. The download bar fills, the affected service auto-restarts, and the new content shows up in the corresponding door.
 3. **Check your settings.** Below the model picker on the Settings page, every environment variable is editable inline. Click Save; click "Restart affected services" if needed.
 
 ### Recommended models
 
-All three are the same Qwen 3.5 Instruct model at different sizes — same architecture, same tool-calling behavior, three VRAM tiers. The "Pick a brain" panel on the Settings page lets you pull and activate any of them with one click.
+Two brains, both empirically verified end-to-end through the SSE proxy (BM25 passage retrieval and grounded-answer pass) against the same translate-skill fixture. Both produce the Opus-reference output across consecutive runs. The "Pick a brain" panel on the Settings page lets you pull and activate either one with one click. Clicking a model points every Claude alias (sonnet, opus, haiku) at that brain and makes it the default for new Open WebUI chats at the same time.
 
 | Model | VRAM | Best for |
 |---|---|---|
-| `frob/qwen3.5-instruct:4b` | ~3 GB | Laptops, integrated GPUs, quick prototyping |
-| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended default.** Daily Claude Code work on a 6–12 GB GPU |
-| `frob/qwen3.5-instruct:27b` | ~16 GB | 16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX) |
+| `qwen3.5:9b` | ~7 GB | **Recommended default.** Strong procedure-following, reliable tool calling, daily Claude Code work on an 8 to 12 GB GPU |
+| `gemma4:e4b` | ~10 GB | Cleaner structured output and more precise citations than the 9B qwen; 12+ GB GPUs where output structure and citation quality matter more than footprint |
 
-> **Why Qwen 3.5 Instruct?** It produces proper Anthropic-style `tool_use` blocks, which Claude Code requires. The `frob/` variant has thinking mode disabled — same weights, same quality, but faster responses without `<think>` blocks. Other models can be installed via `./krull pull-model <name>` and selected by editing `OLLAMA_MODEL` in the Settings page; see [TECHNICAL.md](TECHNICAL.md#pulling-models) for details.
+> **Why these two?** Both produce Anthropic-style `tool_use` blocks that Claude Code requires. Qwen 3.5 9B is the lightest model that reliably applies grammar patterns from retrieved passages; Gemma 4 e4b trades roughly 3 GB of VRAM for cleaner structured output and more precise file-line citations. Smaller variants (4B class) were tested and produced inconsistent procedure-following. Other models can be installed via `./krull pull-model <name>` and selected by editing `OLLAMA_MODEL` in the Settings page; see [TECHNICAL.md](TECHNICAL.md#pulling-models) for details.
 
 ---
 

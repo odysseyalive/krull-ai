@@ -75,29 +75,28 @@ Individual scripts in `scripts/` still work directly if needed. The Library of A
 
 ## Pulling models
 
-The fastest way to pull and activate a recommended model is the **"Pick a brain"** panel on the Settings page (`http://localhost:8000/settings`). It shows the three Krull-recommended Qwen variants as cards; clicking one pulls it (if needed) and atomically: writes `OLLAMA_MODEL` to `.env`, patches every `model: openai/...` line in `litellm/config.yaml`, and restarts `krull-litellm`. No manual config edits required.
+The fastest way to pull and activate a recommended model is the **"Pick a brain"** panel on the Settings page (`http://localhost:8000/settings`). It shows the two Krull-recommended brains as cards; clicking one pulls it (if needed) and atomically: writes `OLLAMA_MODEL` to `.env`, patches every `model: openai/...` line in `litellm/config.yaml`, and restarts `krull-litellm`. Every Claude alias (sonnet, opus, haiku) points at the selected brain after one click. Open WebUI's default model updates at the same time. No manual config edits required.
 
 The CLI does the same work for any model:
 
 | Model | VRAM | Good for |
 |---|---|---|
-| `frob/qwen3.5-instruct:4b` | ~3 GB | Laptops, integrated GPUs, quick prototyping |
-| `frob/qwen3.5-instruct:9b` | ~6 GB | **Recommended default** — daily Claude Code work on a 6–12 GB GPU |
-| `frob/qwen3.5-instruct:27b` | ~16 GB | 16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX) |
+| `qwen3.5:9b` | ~7 GB | **Recommended default.** Daily Claude Code work on an 8 to 12 GB GPU. Strong procedure-following and reliable tool calling. |
+| `gemma4:e4b` | ~10 GB | 12+ GB GPUs where cleaner structured output and more precise file-line citations matter more than footprint |
 
 ```bash
-./krull pull-model frob/qwen3.5-instruct:9b
+./krull pull-model qwen3.5:9b
 ```
 
 This pulls the model and applies tuned parameters (temperature 0.7, top_p 0.8) that work well with system prompts and persona-driven use. The defaults ship at temperature 1.0, which is too hot.
 
-> **Why this model?** The `frob/qwen3.5-instruct` variant is qwen3.5 with thinking mode disabled — same weights, same quality, faster responses without `<think>` blocks. It produces proper Anthropic-style `tool_use` blocks, which Claude Code requires. The qwen2.5-coder models output tool calls as JSON text instead, which breaks tool calling entirely.
+> **Why these two?** Both produce Anthropic-style `tool_use` blocks that Claude Code requires, and both survived empirical verification against the SSE proxy's BM25 passage retrieval and grounded-answer pass on the translate-skill fixture. Qwen 3.5 9B is the lightest model tested that reliably applies grammar patterns from retrieved passages; Gemma 4 e4b trades roughly 3 GB of VRAM for cleaner structured output. The 4B-class variants of both families were tested and produced inconsistent procedure-following. The older `frob/qwen3.5-instruct` variants were deprecated after the base `qwen3.5` model passed the same verification at identical footprint with correct word-order application (the instruct tune produced inverted grammar patterns the base weights handle correctly).
 
 You can pull multiple models at once, or override parameters:
 
 ```bash
-./krull pull-model frob/qwen3.5-instruct:9b frob/qwen3.5-instruct:27b
-TEMPERATURE=0.6 ./krull pull-model frob/qwen3.5-instruct:9b
+./krull pull-model qwen3.5:9b gemma4:e4b
+TEMPERATURE=0.6 ./krull pull-model qwen3.5:9b
 ```
 
 ---
@@ -285,7 +284,7 @@ litellm_settings:
 model_list:
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/frob/qwen3.5-instruct:9b
+      model: openai/qwen3.5:9b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-e4c0de164d854d4dbd003556033363c2"
 ```
@@ -463,7 +462,7 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 **Services won't start:** Run `./krull start`. It checks everything and tells you what's missing.
 
-**Model not responding:** Pull at least one model first: `docker exec krull-ollama ollama pull frob/qwen3.5-instruct:9b`
+**Model not responding:** Pull at least one model first: `docker exec krull-ollama ollama pull qwen3.5:9b`
 
 **Claude Code can't connect:** Check that LiteLLM is running (`docker logs krull-litellm`) and that your model name in `litellm/config.yaml` matches what Claude Code expects. Use `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) to skip the login screen.
 
@@ -471,7 +470,7 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 **Filters not working:** Run `./krull setup` again. Check **Admin Panel > Functions** in Open WebUI to verify they're listed and enabled.
 
-**Out of GPU memory:** Try a smaller model (`frob/qwen3.5-instruct:4b`) or a quantized variant like `frob/qwen3.5-instruct:9b-q4_K_M`.
+**Out of GPU memory:** Try `qwen3.5:9b` instead of `gemma4:e4b` (about 3 GB less VRAM), or pull a quantized variant like `qwen3.5:9b-q4_K_M`.
 
 **FAA chart edition expired:** The FAA updates VFR charts every 56 days. If downloads fail, update the edition date: `FAA_EDITION=MM-DD-YYYY ./krull download-maps --aeronautical pacific-nw`
 

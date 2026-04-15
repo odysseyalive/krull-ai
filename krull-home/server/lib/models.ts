@@ -1,10 +1,13 @@
 /**
  * Recommended models + Ollama state.
  *
- * The three frob/qwen3.5-instruct variants are the canonical Krull
- * recommendations: same architecture, same tool-calling behavior, three
- * size points. Anything else the user wants is supported via the .env
- * OLLAMA_MODEL field directly — this list is purely for the picker UX.
+ * Two brains, both empirically verified end-to-end through the SSE proxy
+ * (BM25 passage retrieval + grounded-answer pass) on the same fixture:
+ * `/study-prep translate My name is Francis. How are you doing?`. Both
+ * produce the Opus-reference output `Francis nayka yax̣al. qʰata mayka?`
+ * across two consecutive runs. Anything else the user wants is supported
+ * via the .env OLLAMA_MODEL field directly — this list is purely for the
+ * picker UX.
  */
 /* Ollama HTTP endpoint inside the docker network. The container hostname
  * matches the compose service name. We hit /api/tags rather than shelling
@@ -34,40 +37,20 @@ export interface RecommendedModel {
 
 export const RECOMMENDED_MODELS: RecommendedModel[] = [
   {
-    key: "frob/qwen3.5-instruct:4b",
-    label: "Qwen 3.5 Instruct · 4B",
-    vram: "~3 GB",
-    description: "Smallest variant. Quick responses on lighter hardware.",
-    bestFor: "Laptops, integrated GPUs, quick prototyping.",
-  },
-  {
-    key: "frob/qwen3.5-instruct:9b",
-    label: "Qwen 3.5 Instruct · 9B",
-    vram: "~6 GB",
-    description: "The recommended default. Strong coding + reliable Anthropic-style tool calling.",
-    bestFor: "Most users. Daily Claude Code work on a 6–12 GB GPU.",
-  },
-  {
-    key: "frob/qwen3.5-instruct:27b",
-    label: "Qwen 3.5 Instruct · 27B",
-    vram: "~16 GB",
-    description: "Best quality variant. Slower responses, sharper reasoning.",
-    bestFor: "16+ GB GPUs (RTX 4080/4090, A6000, 7900 XTX).",
-  },
-  {
-    key: "qwen3.5:35b-a3b",
-    label: "Qwen 3.5 MoE · 36B-A3B",
-    vram: "~27 GB",
+    key: "qwen3.5:9b",
+    label: "Qwen 3.5 · 9B",
+    vram: "~7 GB",
     description:
-      "Mixture-of-Experts hybrid thinking model: 36 B total weights (all resident), but only 3 B fire per token — generation runs at ~9 B-class speed on adequate VRAM. Tool calling verified end-to-end through the SSE proxy.",
-    bestFor:
-      "24 GB+ GPUs (RTX 3090/4090, A6000). Hybrid thinking model: emits a reasoning trace before each reply, so wall-clock per turn is longer than a dense 9 B even though token throughput is similar.",
-    contextSuggestion: {
-      numCtx: 131072,
-      compactLimit: 98304,
-      rationale:
-        "Same window as the dense default. KV cache lives in shared attention layers and grows the same way it would on a dense model — it isn't free just because the model is MoE. What you do get: only 3 B params fire per token, so the model stays interactive at this context size where a dense 36 B would crawl. Auto-compact at 75% as usual.",
-    },
+      "The recommended default. Strong procedure-following, reliable tool calling, and correct grammar-pattern application on BM25-retrieved passages.",
+    bestFor: "Most users. Daily Claude Code work on a 8–12 GB GPU.",
+  },
+  {
+    key: "gemma4:e4b",
+    label: "Gemma 4 · e4b",
+    vram: "~10 GB",
+    description:
+      "Google Gemma 4 effective-4B variant. Cleaner structured output and more precise citations than the 9B qwen; larger VRAM footprint.",
+    bestFor: "12+ GB GPUs where citation precision and output structure matter more than footprint.",
   },
 ];
 
