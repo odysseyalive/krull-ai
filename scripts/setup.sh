@@ -209,8 +209,9 @@ install_function \
 # On a single-GPU stack with a thinking-mode model loaded, each of those
 # triggers a full thinking trace — turning a 1-turn answer into 4-5
 # minutes of GPU work even when the answer itself was fast.
-# We disable them here. Users who want any of these can re-enable them
-# in Admin Panel > Settings > Interface.
+# Title generation is kept on (one call per new chat, not per turn);
+# the rest stay off. Users who want any of the others can re-enable
+# them in Admin Panel > Settings > Interface.
 echo ""
 echo "Disabling auxiliary task generation (title/tags/follow-up/autocomplete)..."
 TASK_CONFIG=$(webui_api GET "/api/v1/tasks/config")
@@ -218,7 +219,7 @@ if [ -n "$TASK_CONFIG" ] && echo "$TASK_CONFIG" | python3 -c "import sys,json; j
     PATCHED=$(echo "$TASK_CONFIG" | python3 -c "
 import sys, json
 cfg = json.load(sys.stdin)
-cfg['ENABLE_TITLE_GENERATION'] = False
+cfg['ENABLE_TITLE_GENERATION'] = True
 cfg['ENABLE_TAGS_GENERATION'] = False
 cfg['ENABLE_FOLLOW_UP_GENERATION'] = False
 cfg['ENABLE_AUTOCOMPLETE_GENERATION'] = False
