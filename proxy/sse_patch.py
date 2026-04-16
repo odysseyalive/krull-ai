@@ -4317,6 +4317,37 @@ def format_resources_section(skills: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_ENV_FILE_NAMES = (".env", ".env.local", ".env.production", ".env.development")
+_ENV_VAR_RE = re.compile(r"^([A-Z][A-Z0-9_]{2,})=", re.MULTILINE)
+_ENV_COMMENT_RE = re.compile(r"^\s*#\s*(.+)", re.MULTILINE)
+
+
+def _discover_env_variables(project_root: str) -> list[dict]:
+    """Scan for .env* files in the project root. For each file found,
+    extract variable names (never values) grouped by comment sections.
+    Returns a list of {file, vars} dicts. Universal: works for any
+    project that uses the .env convention."""
+    results = []
+    root = Path(project_root)
+    for name in _ENV_FILE_NAMES:
+        env_path = root / name
+        if not env_path.is_file():
+            continue
+        try:
+            text = env_path.read_text(errors="replace")
+        except (PermissionError, OSError):
+            continue
+        var_names = _ENV_VAR_RE.findall(text)
+        if not var_names:
+            continue
+        results.append({
+            "file": name,
+            "path": str(env_path),
+            "vars": var_names,
+        })
+    return results
+
+
 class ProjectContext:
     """Resolved per-cwd project state, cached in PROJECT_CACHE."""
 
@@ -4325,6 +4356,7 @@ class ProjectContext:
         self.project_root = find_project_root(cwd)
         self.skills = discover_skills(self.project_root)
         self.skill_names = {s["name"] for s in self.skills}
+        self.env_files = _discover_env_variables(self.project_root)
 
     def _header(self) -> list[str]:
         skills_dir_lines = []
@@ -4343,19 +4375,23 @@ class ProjectContext:
             parts.append("Skills directories: " + ", ".join(skills_dir_lines))
         return parts
 
+    def _env_section(self) -> list[str]:
+        """Format env-file variable names for the project context.
+        Shows file name + variable names so the model knows what's
+        available. Never surfaces values — the model reads those at
+        runtime via Bash(grep VAR .env.local) or similar."""
+        if not self.env_files:
+            return []
+        lines = ["", "Environment files (variable NAMES only — read "
+                 "values via Bash at runtime, never embed in output):"]
+        for ef in self.env_files:
+            var_list = ", ".join(ef["vars"][:20])
+            if len(ef["vars"]) > 20:
+                var_list += f" (+{len(ef['vars']) - 20} more)"
+            lines.append(f"  {ef['file']}: {var_list}")
+        return lines
+
     def _footer(self) -> list[str]:
-        # Shell rules used to live here, but folding them into the bottom
-        # of a 3 KB project-context message demoted them out of the
-        # model's prime attention zone. They're now injected as a
-        # standalone system message at the front via inject_shell_rules,
-        # alongside TOOL_GUIDANCE/DATE/TRUTH_GUARD where they get the same
-        # anchoring benefit as the other instructional filters.
-        #
-        # The "PreToolUse hook error" environmental note also used to live
-        # here. Removed because the literal hook error string is rendered
-        # client-side by Claude Code as a display annotation and is not
-        # transmitted in the API content. The model can't act on something
-        # it can't see; the advice was a no-op.
         return [
             "[End Krull Project Context]",
         ]
@@ -4373,12 +4409,13 @@ class ProjectContext:
                 "Skill resources (top-level subdirectories visible to the proxy — read or list these as the skill's procedure directs):",
                 resources,
             ]
+        parts += self._env_section()
         parts += self._footer()
         return "\n".join(parts)
 
     def static_message(self) -> str:
         """Compact message without the skill listing. Used on turns 2+."""
-        parts = self._header() + self._footer()
+        parts = self._header() + self._env_section() + self._footer()
         return "\n".join(parts)
 
 
