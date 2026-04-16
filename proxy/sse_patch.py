@@ -1707,6 +1707,93 @@ LOOP_BREAK_HINT_TEMPLATE = (
 )
 
 
+PROCEDURE_CONTINUATION_TEMPLATE = (
+    "[Krull Procedure Continuation]\n"
+    "On your LAST turn you produced text but made ZERO tool calls. "
+    "The /{skill_name} procedure is still active and has remaining "
+    "steps (see the Procedure TOC above).\n"
+    "\n"
+    "Your declared intention was: \"{declaration}\"\n"
+    "\n"
+    "Do not redeclare. EXECUTE: your next output must be one or more "
+    "tool calls that carry out the step you described. If the step "
+    "requires a web search, call WebSearch. If it requires reading a "
+    "file, call Read. If it requires fetching a URL, call WebFetch. "
+    "If genuinely blocked with no tool path forward, say so in under "
+    "50 words — do not produce another multi-paragraph plan.\n"
+    "[End Krull Procedure Continuation]"
+)
+
+
+def inject_procedure_continuation(messages: list) -> list:
+    """Detect when the model emitted text-only output (no tool_calls)
+    on its previous turn while an active slash-command procedure is
+    in progress. This is the 'declaration instead of action' pattern:
+    the model says 'I will now search…' instead of calling WebSearch.
+
+    Trigger: last assistant message has >100 chars of text AND no
+    tool_calls AND the forcing directive marker is present in system
+    messages (active procedure). Fires once per text-only stall —
+    idempotent via marker check.
+
+    Universal: applies to any skill. Detection is mechanical: message
+    shape (text, no tool calls) + forcing-directive presence. No skill
+    name, tool name, or content inspection beyond extracting a short
+    snippet of the model's own declaration for the nudge."""
+    # Idempotent
+    for m in messages:
+        if (m.get("role") == "system"
+                and "[Krull Procedure Continuation]"
+                in _content_text(m.get("content", ""))):
+            return messages
+
+    # Is an active procedure in progress?
+    has_forcing = False
+    skill_name = ""
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        c = _content_text(m.get("content", ""))
+        if "[Skill Execution — Next Action]" in c:
+            has_forcing = True
+            # Extract skill name from "Executing /research on: ..."
+            match = re.search(r"Executing /(\w+)", c)
+            if match:
+                skill_name = match.group(1)
+    if not has_forcing:
+        return messages
+
+    # Was the last assistant message text-only?
+    last_assistant = None
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            last_assistant = m
+            break
+    if last_assistant is None:
+        return messages
+    if last_assistant.get("tool_calls"):
+        return messages  # had tool calls — not a stall
+    text = _content_text(last_assistant.get("content", "") or "")
+    if len(text) < 100:
+        return messages  # too short to be a declaration
+
+    # Extract first 120 chars as the "declaration" snippet
+    declaration = text[:120].replace("\n", " ").strip()
+    if len(text) > 120:
+        declaration += "…"
+
+    hint = PROCEDURE_CONTINUATION_TEMPLATE.format(
+        skill_name=skill_name or "skill",
+        declaration=declaration,
+    )
+    proxy_log("FILTER",
+              f"+procedure_continuation (/{skill_name}, "
+              f"last assistant was {len(text)} chars text-only)",
+              level="warn",
+              data={"skill": skill_name, "text_chars": len(text)})
+    return _insert_after_system_messages(messages, hint)
+
+
 def inject_loop_break(messages: list) -> list:
     """If a tool-call loop is detected, inject a system reminder telling
     the model to stop and reconsider. Position: after Claude Code's
@@ -4472,6 +4559,7 @@ async def apply_filters(
     messages = inject_slash_command_protocol(messages)
     messages = inject_procedure_maps(messages)
     messages = inject_loop_break(messages)
+    messages = inject_procedure_continuation(messages)
     messages = inject_approach_exhausted_directive(messages)
     messages = inject_data_starvation_warning(messages)
     messages = inject_stalled_progress_warning(messages)
