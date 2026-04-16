@@ -336,6 +336,25 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> tuple[str, str]:
                       data={"from": "WebFetch", "to": "Bash", "url": url})
             return "Bash", json.dumps(new_args)
 
+    # WebSearch → Bash(curl /search?q=…): Claude Code's WebSearch relies
+    # on Anthropic's server-side web_search_20250305 tool which our local
+    # backend doesn't implement. The proxy's /search endpoint queries
+    # SearXNG and returns formatted markdown. Same structural pattern as
+    # the WebFetch rewrite — keyed on tool name only.
+    if tool_name == "WebSearch" and REWRITE_WEBFETCH_TO_BASH:
+        query = args.get("query", "")
+        if isinstance(query, str) and query.strip():
+            encoded = urllib.parse.quote(query.strip(), safe="")
+            search_url = f"{WEBFETCH_PROXY_URL.rstrip('/')}/search?q={encoded}"
+            command = f"curl -sSL --max-time 15 {shlex.quote(search_url)}"
+            new_args = {
+                "command": command,
+                "description": f"Search: {query[:80]}",
+            }
+            proxy_log("PROXY", f"Rewrote WebSearch → Bash (query={query[:80]})",
+                      data={"from": "WebSearch", "to": "Bash", "query": query})
+            return "Bash", json.dumps(new_args)
+
     # Step 0.5: Relative-path resolution for file-operation tools.
     # When the model emits Read("references/foo.md") while a slash
     # command is active, the file is almost certainly inside the active
@@ -5129,6 +5148,78 @@ async def _fetch_via_playwright(url: str, timeout: float, browser) -> tuple[str,
         if context is not None:
             with contextlib.suppress(Exception):
                 await context.close()
+
+
+@app.get("/search")
+async def search_web(
+    request: Request,
+    q: str,
+    num: int = 5,
+):
+    """Search SearXNG and return formatted markdown results. Used by
+    the WebSearch→Bash rewrite so the model gets clean, citable search
+    results instead of raw JSON. Same design as /fetch: always returns
+    200 with markdown, never a 5xx."""
+    session_id = get_session_id(request)
+    _current_session_id.set(session_id)
+
+    if not q or not q.strip():
+        return PlainTextResponse(
+            "# Search rejected\n\nEmpty query.\n",
+            media_type="text/markdown",
+        )
+
+    try:
+        search_url = (
+            f"{SEARXNG_URL}/search"
+            f"?q={urllib.parse.quote(q.strip())}"
+            f"&format=json&categories=general"
+        )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(search_url)
+            if resp.status_code != 200:
+                proxy_log("PROXY", f"/search SearXNG error: {resp.status_code}",
+                          level="error")
+                return PlainTextResponse(
+                    f"# Search failed\n\nSearXNG returned HTTP {resp.status_code}.\n",
+                    media_type="text/markdown",
+                )
+            data = resp.json()
+    except Exception as e:
+        proxy_log("PROXY", f"/search error: {e}", level="error")
+        return PlainTextResponse(
+            f"# Search failed\n\nError: {type(e).__name__}: {e}\n",
+            media_type="text/markdown",
+        )
+
+    results = data.get("results", [])[:num]
+    if not results:
+        proxy_log("PROXY", f"/search no results for: {q[:80]}")
+        return PlainTextResponse(
+            f"# Search: {q}\n\nNo results found.\n",
+            media_type="text/markdown",
+        )
+
+    date_str = datetime.now().strftime("%B %d, %Y")
+    lines = [f"# Search: {q}", f"*Retrieved {date_str}*", ""]
+    for i, r in enumerate(results, 1):
+        title = r.get("title", "")
+        url = r.get("url", "")
+        snippet = r.get("content", "")
+        lines.append(f"{i}. **{title}**")
+        lines.append(f"   URL: {url}")
+        if snippet:
+            lines.append(f"   {snippet}")
+        lines.append("")
+    lines.append(
+        "To cite any result, you MUST read the full page via WebFetch "
+        "or Read before using it as a source. Search snippets are "
+        "discovery tools only."
+    )
+    body = "\n".join(lines)
+    proxy_log("PROXY", f"/search ok ({len(results)} results for: {q[:60]})",
+              data={"query": q, "results": len(results)})
+    return PlainTextResponse(body, media_type="text/markdown")
 
 
 @app.get("/fetch")
