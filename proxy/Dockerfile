@@ -2,7 +2,17 @@ FROM python:3.11-slim
 WORKDIR /app
 # uvicorn[standard] pulls in watchfiles, which --reload needs to detect
 # changes efficiently when /app is bind-mounted from the host.
-RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx
+# playwright + chromium power the /fetch endpoint (JS-rendered URL
+# fetch); html2text converts rendered HTML → markdown. `playwright
+# install --with-deps chromium` pulls chromium itself (~280MB) plus
+# the system libs it needs at runtime.
+RUN pip install --no-cache-dir \
+      fastapi \
+      'uvicorn[standard]' \
+      httpx \
+      patchright \
+      html2text \
+ && patchright install --with-deps chromium
 COPY sse_patch.py .
 # --reload watches the working directory for .py changes and restarts
 # the app when one is edited. Combined with the ./proxy bind mount in

@@ -13,10 +13,12 @@ Flow: Claude Code → LiteLLM → this proxy → Ollama /v1/chat/completions
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import uuid
 import time
@@ -26,9 +28,69 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, PlainTextResponse
 
-app = FastAPI()
+# Patchright is a drop-in replacement for Playwright that patches the
+# CDP signatures Cloudflare Turnstile (and other bot detectors) use to
+# fingerprint automation — Runtime.enable leak, Console.enable leak,
+# --enable-automation / --disable-blink-features=AutomationControlled
+# flag handling, and closed-shadow-root interaction. Same async API as
+# playwright.async_api, so the rest of this file treats it identically.
+# Optional dependency: proxy degrades to httpx-only fetching when the
+# browser isn't available. This keeps the module importable in dev
+# environments without the browser binary.
+try:
+    from patchright.async_api import async_playwright
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    async_playwright = None  # type: ignore
+    _PLAYWRIGHT_AVAILABLE = False
+
+try:
+    import html2text as _html2text
+    _HTML2TEXT_AVAILABLE = True
+except ImportError:
+    _html2text = None
+    _HTML2TEXT_AVAILABLE = False
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: "FastAPI"):
+    """Launch a persistent chromium instance on startup, close on
+    shutdown. All /fetch requests reuse this one browser — per-request
+    context, new page per request. Cold-launching chromium on every
+    fetch would waste 1-2s each time."""
+    browser = None
+    pw = None
+    if _PLAYWRIGHT_AVAILABLE and os.environ.get(
+        "ENABLE_WEBFETCH_PLAYWRIGHT", "true"
+    ).lower() == "true":
+        try:
+            pw = await async_playwright().start()
+            browser = await pw.chromium.launch(headless=True)
+            proxy_log("PROXY", "Playwright chromium launched for /fetch")
+        except Exception as e:
+            proxy_log("PROXY", f"Playwright launch failed: {e} — /fetch will use httpx fallback",
+                      level="warn")
+            browser = None
+            if pw is not None:
+                with contextlib.suppress(Exception):
+                    await pw.stop()
+                pw = None
+    app.state.playwright_browser = browser
+    app.state.playwright = pw
+    try:
+        yield
+    finally:
+        if browser is not None:
+            with contextlib.suppress(Exception):
+                await browser.close()
+        if pw is not None:
+            with contextlib.suppress(Exception):
+                await pw.stop()
+
+
+app = FastAPI(lifespan=_lifespan)
 
 # ── Structured File Logger ────────────────────────────────────────────────
 # Writes JSON Lines to /app/logs/proxy.jsonl (bind-mounted to ./logs/ on
@@ -91,6 +153,23 @@ KIWIX_URL = os.environ.get("KIWIX_URL", "http://krull-kiwix:8080")
 ENABLE_WEB_SEARCH = os.environ.get("ENABLE_WEB_SEARCH", "true").lower() == "true"
 ENABLE_KIWIX = os.environ.get("ENABLE_KIWIX", "true").lower() == "true"
 ENABLE_DATE = os.environ.get("ENABLE_DATE", "true").lower() == "true"
+# When the model emits a WebFetch tool call, rewrite it to a Bash call
+# that curls the proxy's /fetch endpoint (chromium-rendered). Claude
+# Code's built-in WebFetch fetches client-side via axios+turndown with
+# no JS rendering, so JS-heavy pages return useless shells. The rewrite
+# is keyed on tool name only — no URL, prompt, or session content is
+# inspected. Gate + endpoint are separate env vars so you can disable
+# either independently.
+REWRITE_WEBFETCH_TO_BASH = os.environ.get(
+    "REWRITE_WEBFETCH_TO_BASH", "true"
+).lower() == "true"
+# Host-side URL the rewritten Bash command targets. Claude Code's Bash
+# tool runs on the host (not inside the proxy container), so this must
+# be a host-reachable address — by default the proxy's published port
+# 4001 on localhost.
+WEBFETCH_PROXY_URL = os.environ.get(
+    "WEBFETCH_PROXY_URL", "http://localhost:4001"
+)
 SEARCH_RESULTS = int(os.environ.get("SEARCH_RESULTS", "5"))
 NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "131072"))
 # Per-tool-result cap for the small-model adapter (task #16). A single
@@ -209,16 +288,45 @@ VALID_PARAMS = {
 }
 
 
-def fix_tool_call_params(tool_name: str, arguments: str) -> str:
-    """Fix common parameter name mistakes and strip invalid params."""
+def fix_tool_call_params(tool_name: str, arguments: str) -> tuple[str, str]:
+    """Fix common parameter name mistakes, strip invalid params, and
+    optionally substitute the entire tool call.
+
+    Returns `(new_tool_name, new_arguments)`. The tool *name* is
+    returned (not just arguments) because some rewrites replace the
+    tool entirely — e.g. WebFetch → Bash against a proxy-owned
+    chromium-rendered fetch endpoint. The rewrite is keyed on tool
+    name only; no URL, prompt, or session content is inspected.
+    """
     try:
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
         if not isinstance(args, dict):
-            return arguments
+            return tool_name, arguments
     except (json.JSONDecodeError, TypeError):
-        return arguments
+        return tool_name, arguments
 
     changed = False
+
+    # Step 0: Whole-tool substitution. Applied before param normalization
+    # so the downstream steps see the substituted tool + its new args.
+    # WebFetch → Bash(curl /fetch?url=…): Claude Code's client-side
+    # WebFetch cannot render JS. The proxy's /fetch endpoint uses a
+    # persistent chromium instance and returns rendered markdown. The
+    # `prompt` arg is intentionally dropped — the model reasons over
+    # the fetched content on the next turn, matching Bash's contract.
+    if tool_name == "WebFetch" and REWRITE_WEBFETCH_TO_BASH:
+        url = args.get("url", "")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            encoded = urllib.parse.quote(url, safe="")
+            fetch_url = f"{WEBFETCH_PROXY_URL.rstrip('/')}/fetch?url={encoded}"
+            command = f"curl -sSL --max-time 30 {shlex.quote(fetch_url)}"
+            new_args = {
+                "command": command,
+                "description": f"Fetch {url} (playwright-rendered via proxy)",
+            }
+            proxy_log("PROXY", f"Rewrote WebFetch → Bash (url={url})",
+                      data={"from": "WebFetch", "to": "Bash", "url": url})
+            return "Bash", json.dumps(new_args)
 
     # Step 1: Rename known mistakes
     fixes = PARAM_FIXES.get(tool_name)
@@ -263,8 +371,8 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> str:
     if changed:
         proxy_log("PROXY", f"Fixed tool params for {tool_name}: {list(args.keys())}",
                   data={"tool": tool_name, "params": list(args.keys())})
-        return json.dumps(args)
-    return arguments if isinstance(arguments, str) else json.dumps(arguments)
+        return tool_name, json.dumps(args)
+    return tool_name, (arguments if isinstance(arguments, str) else json.dumps(arguments))
 
 
 # Match `<cmd> /path/with spaces/file.ext` for ANY command name and ANY
@@ -722,9 +830,87 @@ SLASH_COMMAND_FORCING_DIRECTIVE = (
     "Executing /{skill_name} on: {args}\n"
     "\n"
     "Your next action MUST be a tool call advancing the procedure. "
-    "Not a refusal. Not a menu. Not a meta-comment about scope.\n"
+    "Not a refusal. Not a menu. Not a meta-comment about scope. "
+    "Not a confirmation question: the slash-command invocation IS the "
+    "user's authorization to run the procedure end-to-end. Do not ask "
+    "'would you like me to...', 'should I...', 'do you want me to...' "
+    "before the procedure is complete — act. Questions are only "
+    "appropriate when genuinely blocked and no tool can unblock you.\n"
     "[End Skill Execution]"
 )
+
+
+# Skill-chain return semantics. When a skill's procedure dispatches
+# another skill via Skill() (legitimate — skills can call other skills),
+# Claude Code switches the active-skill context to the sub-skill. Every
+# subsequent proxy turn tracks the sub-skill and injects its directives;
+# the parent skill becomes invisible. Without an explicit return signal,
+# the model finishes the sub-skill and stops there — the parent's
+# remaining steps never run.
+#
+# This directive is the structural return marker. It holds on first
+# principles: when the user invoked /parent and /parent's procedure
+# called /sub, /parent was the actual user intent; /sub is a delegated
+# sub-step of /parent; completing /sub without returning to /parent
+# leaves the user intent unfulfilled. Applies to any chain, any
+# nesting depth, any pair of skills. No skill name or content is
+# special-cased — chain membership is derived purely from the order
+# of loaded-skill user messages in the conversation.
+SLASH_COMMAND_RETURN_TO_PARENT_TEMPLATE = (
+    "[Skill Chain — Return Required]\n"
+    "You are currently running /{sub_skill} as a sub-step dispatched "
+    "from /{parent_skill}'s procedure (parent args: {parent_args}).\n"
+    "\n"
+    "Complete /{sub_skill}'s procedure to its own conclusion, then "
+    "IMMEDIATELY re-invoke Skill(skill=\"{parent_skill}\", "
+    "args=\"{parent_args}\") to return to /{parent_skill} and resume "
+    "from where it was suspended. Do NOT end the conversation, emit a "
+    "final summary, or ask for user input while /{parent_skill} has "
+    "remaining procedural steps.\n"
+    "\n"
+    "The user invoked /{parent_skill}, not /{sub_skill}. Leaving "
+    "execution stranded in /{sub_skill} abandons their actual task. "
+    "The re-invocation is a tool call, not a question — run it.\n"
+    "[End Skill Chain]"
+)
+
+
+def _find_parent_skill_in_chain(
+    messages: list, current_skill: str,
+) -> tuple[str, str] | None:
+    """Walk the conversation looking for a loaded-skill user message
+    whose skill_name differs from the current active skill. If found,
+    that's the immediate parent in the skill chain — the skill whose
+    procedure dispatched the current one via Skill().
+
+    Iterate in chronological order; the latest non-current loaded
+    skill is the parent. Stops at the current skill's loaded message
+    (the latest user message) to avoid misreading a re-entry as its
+    own parent.
+
+    Returns (parent_skill_name, parent_args) or None when no chain
+    exists. Generic: no skill name is inspected; chain membership is
+    derived purely from the sequence of loaded-skill user messages.
+    """
+    parent: tuple[str, str] | None = None
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        flat = _content_text(m.get("content", ""))
+        parsed = _parse_slash_command(flat)
+        if parsed is None:
+            continue
+        name, args, shape = parsed
+        if shape != "loaded":
+            continue
+        if name == current_skill:
+            # Reached the current skill's loaded shape (the latest
+            # user message). Any loaded-skill message after this would
+            # be the current skill's own re-entry; treat this as the
+            # boundary.
+            break
+        parent = (name, args)
+    return parent
 
 RECENCY_REMINDER_THRESHOLD = 15  # messages between user msg and end
 SLASH_COMMAND_RECENCY_REMINDER = (
@@ -835,6 +1021,35 @@ def inject_slash_command_protocol(messages: list) -> list:
               f"+{len(directive)} chars to user msg)",
               data={"skill": skill_name, "shape": shape, "chars": len(directive)})
 
+    # Skill-chain return detection: if the current loaded skill was
+    # dispatched from inside a different skill's procedure, tell the
+    # model to re-invoke the parent after sub-skill completion. Only
+    # meaningful on "loaded" shapes — "initial" is the first turn and
+    # has no prior loaded-skill context yet.
+    if shape == "loaded":
+        parent = _find_parent_skill_in_chain(messages, skill_name)
+        if parent is not None:
+            parent_skill, parent_args = parent
+            already_has_return = any(
+                m.get("role") == "system"
+                and "[Skill Chain — Return Required]" in _content_text(m.get("content", ""))
+                and f"/{skill_name}" in _content_text(m.get("content", ""))
+                and f"/{parent_skill}" in _content_text(m.get("content", ""))
+                for m in messages
+            )
+            if not already_has_return:
+                return_directive = SLASH_COMMAND_RETURN_TO_PARENT_TEMPLATE.format(
+                    sub_skill=skill_name,
+                    parent_skill=parent_skill,
+                    parent_args=parent_args.replace('"', '\\"'),
+                )
+                messages.append({"role": "system", "content": return_directive})
+                proxy_log("FILTER",
+                          f"+skill_chain_return "
+                          f"(/{skill_name} dispatched from /{parent_skill})",
+                          data={"sub": skill_name, "parent": parent_skill,
+                                "parent_args": parent_args})
+
     # Recency reminder: if the user message is far from the generation
     # point (end of messages), the model can't attend to the directive
     # we just appended. Inject a condensed reminder as a system message
@@ -930,6 +1145,33 @@ def inject_slash_command_protocol(messages: list) -> list:
                                 "chunks": len(hits),
                                 "chars": len(passages_text),
                                 "top_paths": [h for h in hits]})
+
+        # Procedure TOC: extract the H2 section headings from the loaded
+        # SKILL.md and surface them as a compact outline at end-of-messages.
+        # The SKILL.md body is already in context (Claude Code injects the
+        # full file as the loaded-shape user message), but on long skills
+        # the model's attention drifts to whichever section its most recent
+        # tool result happens to reference, and the procedural scaffold
+        # (step 1, step 2, step 3) goes unused. Surfacing just the heading
+        # list in the highest-attention slot puts the procedural skeleton
+        # in front of the model every turn without bloating context with
+        # full section bodies. Mirrors the procedure-map augmentation
+        # pattern already ratified in the baseline, applied to the skill's
+        # own top-level structure at injection time.
+        already_has_toc = any(
+            m.get("role") == "system"
+            and "[Active Skill Procedure TOC]" in _content_text(m.get("content", ""))
+            for m in messages
+        )
+        if not already_has_toc:
+            toc_text = _build_active_skill_procedure_toc(
+                _content_text(raw_content), skill_name,
+            )
+            if toc_text:
+                messages.append({"role": "system", "content": toc_text})
+                proxy_log("FILTER", f"+active_skill_procedure_toc "
+                          f"(/{skill_name}, +{len(toc_text)} chars at end)",
+                          data={"skill": skill_name, "chars": len(toc_text)})
 
     return messages
 
@@ -1243,6 +1485,70 @@ def _build_active_skill_manifest(loaded_content: str, skill_name: str) -> str:
     )
 
 
+_PROCEDURE_TOC_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+_PROCEDURE_TOC_MAX_ENTRIES = 20
+_PROCEDURE_TOC_MIN_ENTRIES = 3
+
+
+def _build_active_skill_procedure_toc(
+    loaded_content: str, skill_name: str,
+) -> str:
+    """Return a compact outline of the loaded SKILL.md's H2 section
+    headings. Surfaces the skill author's own procedural scaffold at
+    high attention so the model doesn't miss steps because its focus
+    drifted to a specific sub-file.
+
+    Pure markdown parsing: reads only `## ...` lines in document order
+    from the loaded skill body. No filename match, no keyword scoring,
+    no skill-specific interpretation. If the skill has fewer than
+    _PROCEDURE_TOC_MIN_ENTRIES H2 sections, returns empty (not worth a
+    TOC). If it has more than _PROCEDURE_TOC_MAX_ENTRIES, truncates.
+
+    The closing clause ("do not ask the user for input the procedure is
+    designed to derive") is a universal invariant: a skill whose
+    procedure includes a discovery step (analytics, search, retrieval)
+    has already committed to deriving its inputs from tool output; an
+    upstream confirmation question is a premature abort regardless of
+    which skill or which inputs.
+    """
+    cleaned = _strip_system_reminders(loaded_content)
+    if not cleaned:
+        return ""
+    headings = _PROCEDURE_TOC_HEADING_RE.findall(cleaned)
+    # Drop pure-whitespace matches and duplicates while preserving order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for h in headings:
+        h = h.strip()
+        if not h or h in seen:
+            continue
+        seen.add(h)
+        ordered.append(h)
+    if len(ordered) < _PROCEDURE_TOC_MIN_ENTRIES:
+        return ""
+    truncated = ordered[:_PROCEDURE_TOC_MAX_ENTRIES]
+    outline = "\n".join(f"  {i+1}. {h}" for i, h in enumerate(truncated))
+    more = (
+        f"\n  ({len(ordered) - _PROCEDURE_TOC_MAX_ENTRIES} more sections "
+        f"truncated; read the full SKILL.md for the complete list)"
+        if len(ordered) > _PROCEDURE_TOC_MAX_ENTRIES
+        else ""
+    )
+    return (
+        f"[Active Skill Procedure TOC]\n"
+        f"The /{skill_name} skill body's top-level procedural sections, "
+        f"in document order:\n"
+        f"{outline}{more}\n"
+        f"\n"
+        f"Run through the sections as the skill directs. Do NOT ask the "
+        f"user for input that the skill's own procedure is designed to "
+        f"derive (subjects, topics, queries, source lists). A discovery "
+        f"step inside the skill is the authorized source for those "
+        f"inputs — running it is the next action, not a user prompt.\n"
+        f"[End Active Skill Procedure TOC]"
+    )
+
+
 def _history_has_task_create(messages: list) -> bool:
     """Has the model already called TaskCreate in this conversation?
     If yes, planning has already happened and we should not lock the
@@ -1509,6 +1815,91 @@ DATA_STARVATION_HINT_TEMPLATE = (
 )
 
 
+APPROACH_EXHAUSTED_HINT_TEMPLATE = (
+    "[Krull Approach Exhausted]\n"
+    "Your last {failures} of {total} tool calls have failed or returned "
+    "no useful data:\n"
+    "{failure_summary}\n"
+    "\n"
+    "Treat this specific approach as unavailable. Do NOT retry it with "
+    "minor variations (different spelling, adjacent paths, reworded "
+    "query, same tool again).\n"
+    "\n"
+    "On your next turn, pick ONE of:\n"
+    "  1. If this was a sub-step in a procedure and your procedure has "
+    "subsequent steps, mark this sub-step as skipped-with-gap and "
+    "PROCEED directly to the next step using what you already have.\n"
+    "  2. Try a fundamentally DIFFERENT tool or a clearly different "
+    "source — not the same tool with tweaked arguments.\n"
+    "  3. If there is no next step and no different tool to try, state "
+    "plainly what you tried, what failed, and what the user asked for "
+    "that you could not do.\n"
+    "\n"
+    "Do NOT switch to an unrelated skill as a workaround for a failed "
+    "step inside your current procedure — stay inside the invoked skill "
+    "and progress or report. Do NOT invent details to paper over the "
+    "gap. An honest 'I could not do step X, here is what I did do' is "
+    "always better than a confident wrong answer or a skill detour.\n"
+    "[End Krull Approach Exhausted]"
+)
+
+
+def inject_approach_exhausted_directive(messages: list) -> list:
+    """Fire earlier than data_starvation with a progression-biased
+    message. Trigger: ≥2 failures in the last 3 tool results, OR ≥2
+    consecutive failures at the tail. Defensible as a universal rule:
+    repeated failure of the same approach means the approach is
+    unavailable for this session; the structurally correct next move
+    is progression (skip the failed sub-step, try a different tool, or
+    report plainly) rather than variation-retry or skill-detour. No
+    tool, skill, path, or content matching in the trigger.
+    Idempotent."""
+    # Idempotent — don't stack
+    for m in messages:
+        if m.get("role") == "system" and "[Krull Approach Exhausted]" in _content_text(m.get("content", "")):
+            return messages
+
+    # Collect recent tool results (up to 3) with failure classification
+    recent: list[tuple[bool, str]] = []
+    for m in reversed(messages):
+        if m.get("role") != "tool":
+            continue
+        content = _content_text(m.get("content", ""))
+        recent.append((_is_failure_result(content), content))
+        if len(recent) >= 3:
+            break
+    # recent is newest-first; reverse to chronological for summaries
+    recent.reverse()
+
+    if len(recent) < 2:
+        return messages
+
+    # Consecutive-tail trigger: the last 2 tool results are both failures
+    tail_consec = recent[-1][0] and recent[-2][0]
+    # Window trigger: ≥2 of the last 3 are failures
+    window_fail = sum(1 for f, _ in recent if f)
+    window_trig = len(recent) >= 3 and window_fail >= 2
+
+    if not (tail_consec or window_trig):
+        return messages
+
+    summaries = [
+        c.strip()[:90].replace("\n", " ") for f, c in recent if f
+    ]
+    hint = APPROACH_EXHAUSTED_HINT_TEMPLATE.format(
+        failures=window_fail,
+        total=len(recent),
+        failure_summary="\n".join(f"  - {s}" for s in summaries),
+    )
+    trigger = "consecutive" if tail_consec else "window"
+    proxy_log("FILTER", f"+approach_exhausted ({trigger}: "
+              f"{window_fail}/{len(recent)} recent tool calls failed)",
+              level="warn",
+              data={"trigger": trigger, "failures": window_fail,
+                    "total": len(recent)})
+    return _insert_after_system_messages(messages, hint)
+
+
 def inject_data_starvation_warning(messages: list) -> list:
     """If the model's recent tool calls are mostly failures, inject a
     concrete warning telling it to refuse honestly instead of inventing.
@@ -1639,13 +2030,22 @@ def _last_tool_result_size(messages: list) -> int:
 def _has_substantial_text_answer(messages: list) -> bool:
     """Has the model already produced a substantial text answer?
 
-    A 'substantial text answer' is an assistant message with >500 chars
-    and no tool_calls — meaning the model actually wrote a real response
-    rather than a filler line between tool calls. Used to avoid injecting
-    the synthesis directive after the model has already given its answer.
+    A 'substantial text answer' is an assistant text message (>500
+    chars, no tool_calls) that was NOT followed by any further tool
+    work in the conversation. If a `tool` role message appears after
+    it, the text was narration emitted alongside ongoing tool work,
+    not a resolution — the model kept working after it. Only text
+    that stands alone at the tail of the conversation (no subsequent
+    tool results) is treated as an answer already given. Used to
+    avoid injecting the synthesis directive or grounded-answer pass
+    on top of a completed response, while still firing when the model
+    is merely narrating between tool calls.
     """
-    for m in messages:
-        if m.get("role") != "assistant":
+    for m in reversed(messages):
+        role = m.get("role")
+        if role == "tool":
+            return False
+        if role != "assistant":
             continue
         if m.get("tool_calls"):
             continue
@@ -1749,9 +2149,28 @@ def _should_force_grounded_answer(messages: list) -> bool:
     retrieval pre-loads grounding content, so the model needs fewer
     tool turns to be ready to answer, and the grounded-pass has
     substantial verifiable content (passages themselves) even if the
-    model only ran 2 tool calls."""
+    model only ran 2 tool calls.
+
+    Suppressed during active slash-command procedure execution: when
+    the forcing directive is present in the system messages, the model
+    is inside a procedure that is driving it toward specific steps.
+    Preempting that with a structured-output pass cuts the procedure
+    short at the first substantial tool result (often step 1 of many).
+    Grounded's purpose is to catch hallucination *after* tool work has
+    stopped; during active procedure execution tool work is still
+    expected, so grounded is premature. The other safety nets
+    (approach_exhausted, data_starvation, stalled_progress, hard tool
+    cap) still apply, so failure modes are not un-protected — only
+    early preemption is removed."""
     if _has_substantial_text_answer(messages):
         return False
+    # Active-procedure suppression. Universal: any slash command the
+    # user invokes produces this marker; no skill name is inspected.
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        if "[Skill Execution — Next Action]" in _content_text(m.get("content", "")):
+            return False
     tool_turns = sum(
         1 for m in messages
         if m.get("role") == "assistant" and m.get("tool_calls")
@@ -4006,6 +4425,7 @@ async def apply_filters(
     messages = inject_slash_command_protocol(messages)
     messages = inject_procedure_maps(messages)
     messages = inject_loop_break(messages)
+    messages = inject_approach_exhausted_directive(messages)
     messages = inject_data_starvation_warning(messages)
     messages = inject_stalled_progress_warning(messages)
     messages = truncate_large_tool_results(messages)
@@ -4103,7 +4523,7 @@ def ollama_response_to_chat(ollama_resp: dict, model: str = "") -> dict:
             if isinstance(args, dict):
                 args = json.dumps(args)
             tool_name = func.get("name", "")
-            args = fix_tool_call_params(tool_name, args)
+            tool_name, args = fix_tool_call_params(tool_name, args)
             tool_calls.append({
                 "id": f"call_{uuid.uuid4().hex[:8]}",
                 "index": i,
@@ -4245,7 +4665,7 @@ def chat_response_to_responses(chat_data, model=""):
         if msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 tc_name = tc["function"]["name"]
-                tc_args = fix_tool_call_params(tc_name, tc["function"]["arguments"])
+                tc_name, tc_args = fix_tool_call_params(tc_name, tc["function"]["arguments"])
                 output.append({
                     "type": "function_call",
                     "id": tc.get("id", f"call_{uuid.uuid4().hex[:24]}"),
@@ -4396,7 +4816,7 @@ class StreamAdapter:
             self.output_index += 1
 
         for _idx, tc in sorted(self.tool_calls.items()):
-            tc["arguments"] = fix_tool_call_params(tc["name"], tc["arguments"])
+            tc["name"], tc["arguments"] = fix_tool_call_params(tc["name"], tc["arguments"])
             # Emit function_call with empty arguments initially (like OpenAI does)
             initial_item = {
                 "type": "function_call", "id": tc["id"], "call_id": tc["id"],
@@ -4478,6 +4898,163 @@ def patch_usage_fields(event: dict) -> dict:
         usage.setdefault("cache_read_input_tokens", 0)
         event["usage"] = usage
     return event
+
+
+# ── /fetch endpoint — chromium-rendered URL fetch ─────────────────────────
+#
+# Shared by two consumers:
+#   1. The Claude Code tool path (via fix_tool_call_params, which
+#      rewrites WebFetch → Bash(curl …/fetch?url=…))
+#   2. Open WebUI's web_fetch.py filter (detects URLs in user messages
+#      and prepends rendered content)
+#
+# Both hit this endpoint by plain HTTP GET. Playwright state lives on
+# app.state.playwright_browser (launched in _lifespan above). When the
+# browser isn't available (dev envs without chromium, or Playwright
+# launch failed), the endpoint degrades to httpx + html2text so the
+# contract still holds: URL in → markdown out, never a 5xx.
+
+_FETCH_MAX_CHARS_DEFAULT = 80000
+
+
+def _html_to_markdown(html: str) -> str:
+    """Convert an HTML string to readable markdown. Uses html2text when
+    available; falls back to a light regex strip otherwise. Neither
+    branch assumes anything about the page's content or structure."""
+    if _HTML2TEXT_AVAILABLE and _html2text is not None:
+        h = _html2text.HTML2Text()
+        h.ignore_images = True
+        h.ignore_emphasis = False
+        h.body_width = 0  # Don't wrap lines
+        try:
+            return h.handle(html)
+        except Exception:
+            pass
+    # Regex fallback — strip scripts/styles, then tags, then collapse ws.
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html,
+                  flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+async def _fetch_via_httpx(url: str, timeout: float) -> tuple[str, int, str]:
+    """Plain-HTTP fetch fallback. Returns (markdown, http_status, reason).
+    Reason is a short human-readable note appended to the degraded-mode
+    header; empty on success."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True,
+            headers={"User-Agent": "krull-fetch/1.0"},
+        ) as client:
+            resp = await client.get(url)
+            content_type = resp.headers.get("content-type", "")
+            body = resp.text
+            if "html" in content_type.lower():
+                body = _html_to_markdown(body)
+            return body, resp.status_code, ""
+    except httpx.TimeoutException:
+        return "", 0, "httpx timeout"
+    except httpx.RequestError as e:
+        return "", 0, f"httpx error: {type(e).__name__}: {e}"
+    except Exception as e:
+        return "", 0, f"unexpected error: {type(e).__name__}: {e}"
+
+
+async def _fetch_via_playwright(url: str, timeout: float, browser) -> tuple[str, str]:
+    """Chromium-rendered fetch. Returns (markdown, reason). Reason is
+    empty on success, non-empty on any failure (caller falls back)."""
+    context = None
+    page = None
+    try:
+        # Per Patchright README § Best Practice: do NOT set custom
+        # user_agent / extra headers — Patchright's built-in Chrome
+        # fingerprint is calibrated for undetectability, and any
+        # override creates a signal inconsistency that Turnstile's
+        # TLS-fingerprint / UA cross-check will flag.
+        context = await browser.new_context()
+        page = await context.new_page()
+        await page.goto(url, wait_until="domcontentloaded",
+                        timeout=int(timeout * 1000))
+        # domcontentloaded is more reliable than networkidle for pages
+        # that keep long-lived sockets open (chat apps, analytics).
+        # Brief extra wait lets above-the-fold JS render.
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state(
+                "networkidle", timeout=min(5000, int(timeout * 1000)),
+            )
+        html = await page.content()
+        return _html_to_markdown(html), ""
+    except Exception as e:
+        return "", f"playwright {type(e).__name__}: {e}"
+    finally:
+        if page is not None:
+            with contextlib.suppress(Exception):
+                await page.close()
+        if context is not None:
+            with contextlib.suppress(Exception):
+                await context.close()
+
+
+@app.get("/fetch")
+async def fetch_url(
+    request: Request,
+    url: str,
+    timeout: float = 15.0,
+    max_chars: int = _FETCH_MAX_CHARS_DEFAULT,
+):
+    """Fetch a URL and return rendered markdown. Uses Playwright when
+    available; falls back to httpx on any playwright failure. Always
+    returns 200 with a markdown body — the model needs to reason over
+    whatever came back, not a stack trace."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return PlainTextResponse(
+            f"# Fetch rejected\n\nOnly http/https URLs are supported. Got: {url}\n",
+            media_type="text/markdown",
+        )
+
+    session_id = get_session_id(request)
+    _current_session_id.set(session_id)
+
+    browser = getattr(app.state, "playwright_browser", None)
+    markdown = ""
+    reason = ""
+
+    if browser is not None:
+        markdown, reason = await _fetch_via_playwright(url, timeout, browser)
+        if reason:
+            proxy_log("PROXY", f"/fetch playwright failed, falling back: {reason}",
+                      data={"url": url, "reason": reason}, level="warn")
+
+    if not markdown:
+        body, status, http_reason = await _fetch_via_httpx(url, timeout)
+        if body:
+            markdown = body
+            if reason or status >= 400:
+                header_reason = reason or f"HTTP {status}"
+                markdown = (
+                    f"# Fetch degraded: {header_reason}\n\n"
+                    f"URL: {url}\n\n{markdown}"
+                )
+        else:
+            combined = http_reason or reason or "unknown failure"
+            markdown = (
+                f"# Fetch failed\n\nURL: {url}\n\nReason: {combined}\n"
+            )
+            proxy_log("PROXY", f"/fetch failed for {url}: {combined}",
+                      data={"url": url, "reason": combined}, level="error")
+            return PlainTextResponse(markdown, media_type="text/markdown")
+
+    if len(markdown) > max_chars:
+        markdown = markdown[:max_chars] + (
+            f"\n\n[Content truncated at {max_chars} chars]"
+        )
+
+    header = f"# Fetched: {url}\n\n"
+    proxy_log("PROXY", f"/fetch ok ({len(markdown)} chars)",
+              data={"url": url, "chars": len(markdown)})
+    return PlainTextResponse(header + markdown, media_type="text/markdown")
 
 
 # ── Main proxy handler ────────────────────────────────────────────────────
@@ -4766,7 +5343,7 @@ async def proxy(request: Request, path: str):
                                         if isinstance(args, dict):
                                             args = json.dumps(args)
                                         tool_name = func.get("name", "")
-                                        args = fix_tool_call_params(tool_name, args)
+                                        tool_name, args = fix_tool_call_params(tool_name, args)
                                         call_id = f"call_{uuid.uuid4().hex[:8]}"
                                         _tool_call_cache[call_id] = args
                                         tc_deltas.append({
@@ -4884,8 +5461,10 @@ async def proxy(request: Request, path: str):
                                             args = func.get("arguments", {})
                                             if isinstance(args, dict):
                                                 args = json.dumps(args)
+                                            tool_name = func.get("name", "")
+                                            tool_name, args = fix_tool_call_params(tool_name, args)
                                             tcs.append({"index": i, "id": f"call_{uuid.uuid4().hex[:8]}", "type": "function",
-                                                        "function": {"name": func.get("name", ""), "arguments": args}})
+                                                        "function": {"name": tool_name, "arguments": args}})
                                         chat_chunk["choices"][0]["delta"]["tool_calls"] = tcs
                                     if done:
                                         chat_chunk["choices"][0]["finish_reason"] = "stop"
