@@ -1759,12 +1759,23 @@ def inject_procedure_continuation(messages: list) -> list:
     shape (text, no tool calls) + forcing-directive presence. No skill
     name, tool name, or content inspection beyond extracting a short
     snippet of the model's own declaration for the nudge."""
-    # Idempotent
+    # Idempotency: don't fire if the continuation nudge was already
+    # injected AND the model hasn't made any tool calls since. This
+    # prevents infinite nudge-stall loops while still allowing the
+    # nudge to fire again after the model successfully acted (made
+    # tool calls) and then stalled again on a later turn.
+    has_prior_nudge = False
+    tool_call_after_nudge = False
     for m in messages:
         if (m.get("role") == "system"
                 and "[Krull Procedure Continuation]"
                 in _content_text(m.get("content", ""))):
-            return messages
+            has_prior_nudge = True
+            tool_call_after_nudge = False  # reset
+        elif has_prior_nudge and m.get("role") == "assistant" and m.get("tool_calls"):
+            tool_call_after_nudge = True
+    if has_prior_nudge and not tool_call_after_nudge:
+        return messages  # nudge already present, model hasn't acted yet
 
     # Is an active procedure in progress?
     has_forcing = False
