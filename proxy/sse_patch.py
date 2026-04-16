@@ -104,6 +104,14 @@ _log_file = open(LOG_DIR / "proxy.jsonl", "a", buffering=1)  # line-buffered
 # Current request's session ID — set per-request via contextvars
 import contextvars
 _current_session_id = contextvars.ContextVar("session_id", default="unknown")
+# Active skill's base directory on disk. Set during filter application
+# (inject_slash_command_protocol) when a loaded-shape skill message is
+# detected. Read in fix_tool_call_params to resolve relative paths the
+# model emits against the active skill's directory — e.g. the model
+# calls Read("references/foo.md") but the file is actually at
+# /home/.../skills/research/references/foo.md. Universal: applies to
+# any skill, any file operation tool.
+_current_skill_base = contextvars.ContextVar("skill_base", default="")
 
 
 def proxy_log(category: str, message: str, *, level: str = "info",
@@ -327,6 +335,36 @@ def fix_tool_call_params(tool_name: str, arguments: str) -> tuple[str, str]:
             proxy_log("PROXY", f"Rewrote WebFetch → Bash (url={url})",
                       data={"from": "WebFetch", "to": "Bash", "url": url})
             return "Bash", json.dumps(new_args)
+
+    # Step 0.5: Relative-path resolution for file-operation tools.
+    # When the model emits Read("references/foo.md") while a slash
+    # command is active, the file is almost certainly inside the active
+    # skill's tree — not relative to the user's cwd. Resolve against
+    # the skill's base directory so the Read actually finds the file.
+    # Universal: applies to any skill, any file-operation tool, any
+    # relative path. Only fires when a skill base is known (loaded
+    # shape detected in inject_slash_command_protocol). Absolute paths
+    # (starting with /) are untouched.
+    _FILE_PATH_TOOLS = {"Read", "Write", "Edit", "Glob", "Grep"}
+    if tool_name in _FILE_PATH_TOOLS:
+        skill_base = _current_skill_base.get("")
+        if skill_base:
+            for key in ("file_path", "path", "pattern"):
+                val = args.get(key)
+                if not isinstance(val, str) or not val:
+                    continue
+                # Only resolve paths that look relative (don't start
+                # with /) and aren't glob patterns with wildcards at
+                # the start.
+                if not val.startswith("/") and not val.startswith("*"):
+                    resolved = str(Path(skill_base) / val)
+                    if Path(resolved).exists() or key == "pattern":
+                        args[key] = resolved
+                        changed = True
+                        proxy_log("PROXY",
+                                  f"Resolved relative path: {val} → {resolved}",
+                                  data={"tool": tool_name, "key": key,
+                                        "from": val, "to": resolved})
 
     # Step 1: Rename known mistakes
     fixes = PARAM_FIXES.get(tool_name)
@@ -983,6 +1021,15 @@ def inject_slash_command_protocol(messages: list) -> list:
         )
         log_label = "+slash_command_protocol"
     else:  # shape == "loaded"
+        # Store the active skill's base directory for path resolution
+        # in fix_tool_call_params. Same regex the manifest/passages
+        # builders use, but set once per request.
+        _base_match = _LOADED_SKILL_FULL_PATH_RE.search(
+            _strip_system_reminders(_content_text(raw_content))
+        )
+        if _base_match:
+            _current_skill_base.set(_base_match.group(1).strip())
+
         if _looks_like_meta_question(args):
             directive = SLASH_COMMAND_META_ANSWER_TEMPLATE.format(
                 skill_name=skill_name, args=escaped_args
