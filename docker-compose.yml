@@ -2,7 +2,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: krull-ollama
-    restart: unless-stopped
+    restart: "no"
     tty: true
     volumes:
       - ./data/ollama:/root/.ollama
@@ -14,7 +14,7 @@ services:
     container_name: krull-webui
     depends_on:
       - ollama
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "3000:8080"
     volumes:
@@ -35,7 +35,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: krull-searxng
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - ./data/searxng/settings.yml:/etc/searxng/settings.yml:rw
     cap_drop:
@@ -52,7 +52,7 @@ services:
       - ollama
       - searxng
       - photon
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "4001:8081"
     # Mount the user's home read-only at the same path so the proxy can
@@ -93,7 +93,7 @@ services:
     container_name: krull-litellm
     depends_on:
       - sse-proxy
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "4000:4000"
     volumes:
@@ -105,7 +105,7 @@ services:
   tileserver:
     image: ghcr.io/maplibre/martin:latest
     container_name: krull-tileserver
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - ./data/tiles:/data:ro
     entrypoint: ["/bin/sh", "-c"]
@@ -125,14 +125,14 @@ services:
     container_name: krull-map-viewer
     depends_on:
       - tileserver
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "8070:80"
 
   photon:
     image: rtuszik/photon-docker:latest
     container_name: krull-photon
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "2322:2322"
     volumes:
@@ -143,7 +143,7 @@ services:
   kiwix-front:
     image: nginx:alpine
     container_name: krull-kiwix-front
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       - kiwix
     ports:
@@ -160,7 +160,7 @@ services:
   krull-updater:
     build: ./krull-updater
     container_name: krull-updater
-    restart: unless-stopped
+    restart: "no"
     volumes:
       # The repo, so we can git fetch + git merge into it
       - .:/workspace
@@ -170,7 +170,7 @@ services:
   krull-home:
     build: ./krull-home
     container_name: krull-home
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "8000:8000"
     volumes:
@@ -185,7 +185,7 @@ services:
   kiwix:
     image: ghcr.io/kiwix/kiwix-serve:latest
     container_name: krull-kiwix
-    restart: unless-stopped
+    restart: "no"
     # No external port — fronted by krull-kiwix-front on 8090, which proxies
     # everything through and overrides /skin/favicon/* with the Krull mark.
     expose:
