@@ -55,7 +55,13 @@ Everything else — Node.js, bash scripts, model runtimes — ships inside the c
 
 ```bash
 git clone git@github.com:odysseyalive/krull-ai.git
+```
+
+```bash
 cd krull-ai
+```
+
+```bash
 ./krull start
 ```
 
@@ -67,11 +73,28 @@ On Apple Silicon Macs, Ollama has to run **natively on the host**, not inside Do
 
 One-time setup before `./krull start`:
 
+Docker Desktop:
+
 ```bash
-brew install --cask docker        # Docker Desktop
-brew install ollama               # Ollama
-ollama serve                      # or: brew services start ollama
-./krull start                     # auto-detects macOS
+brew install --cask docker
+```
+
+Ollama:
+
+```bash
+brew install ollama
+```
+
+Start Ollama (or: `brew services start ollama`):
+
+```bash
+ollama serve
+```
+
+Start Krull (auto-detects macOS):
+
+```bash
+./krull start
 ```
 
 `./krull start` detects macOS, points Open WebUI / the SSE proxy / Krull Home at `host.docker.internal:11434`, and pulls your active model through the native daemon.
