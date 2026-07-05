@@ -36,9 +36,34 @@ trap cleanup EXIT
 # (the real claude-sonnet-4-6 window) but the backend is qwen 9B with
 # 131K. Claude Code's compaction threshold = window - 20K - 13K, so
 # with 131072 it fires at ~98K tokens instead of the default ~167K.
+#
+# Local-LLM tuning (each verified against the Claude Code source):
+#   ANTHROPIC_MODEL — pin the main-loop model to a name litellm/config.yaml
+#     maps. Without it, whatever the installed CLI's default model is gets
+#     requested verbatim, and a CLI update can silently drift past the
+#     mappings.
+#   ANTHROPIC_SMALL_FAST_MODEL — every background call (session titles,
+#     WebFetch summarization, tool-use summaries, ...) hard-codes the
+#     "small fast model", default claude-haiku-4-5. There is NO switch to
+#     disable those calls; the only control is pointing them at a mapped
+#     name so they hit the local backend instead of failing.
+#   MAX_THINKING_TOKENS=0 — extended thinking defaults ON for first-party
+#     providers (a custom base URL does not change the provider). A
+#     thinking budget is wasted latency on the local backend, which does
+#     its own thinking server-side.
+#   DISABLE_PROMPT_CACHING=1 — stop emitting cache_control blocks the
+#     local backend ignores; smaller, simpler request bodies.
+#   DISABLE_COST_WARNINGS=1 — cost accounting is meaningless against a
+#     local backend.
+# All overridable from the environment.
 ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
 ANTHROPIC_BASE_URL=http://localhost:4000 \
+ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6} \
+ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-claude-haiku-4-5-20251001} \
 CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-131072} \
+MAX_THINKING_TOKENS=${MAX_THINKING_TOKENS:-0} \
+DISABLE_PROMPT_CACHING=${DISABLE_PROMPT_CACHING:-1} \
+DISABLE_COST_WARNINGS=${DISABLE_COST_WARNINGS:-1} \
 DISABLE_TELEMETRY=1 \
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
 exec claude "${EXTRA[@]}" "$@"

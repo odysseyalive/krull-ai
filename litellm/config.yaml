@@ -40,3 +40,12 @@ model_list:
       model: openai/gemma4:e4b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+
+  # Claude Code's background calls (session titles, summaries, WebFetch)
+  # default to the bare alias claude-haiku-4-5 when ANTHROPIC_SMALL_FAST_MODEL
+  # is unset — e.g. when claude is launched without the krull-claude shim.
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openai/gemma4:e4b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"

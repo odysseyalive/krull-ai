@@ -4825,7 +4825,9 @@ def responses_request_to_chat(data):
         result["temperature"] = data["temperature"]
     if "top_p" in data:
         result["top_p"] = data["top_p"]
-    if "tools" in data:
+    # Truthiness guard: an explicit "tools": null (or []) is equivalent to
+    # an absent field — the key is omitted so no consumer sees a non-list.
+    if data.get("tools"):
         tools = []
         for tool in data["tools"]:
             if "function" in tool:
@@ -5386,9 +5388,14 @@ async def proxy(request: Request, path: str):
         # Hard cap: if the model has exceeded the total tool-call limit,
         # strip all tools and force a text-only response. This is the
         # nuclear option when loop_break and stalled_progress both fail.
-        chat_body["messages"], chat_body["tools"] = apply_hard_tool_cap(
+        # Same conditional-assignment shape as the Chat Completions path
+        # below: a request that arrived without tools must keep the key
+        # absent, never gain a null one.
+        chat_body["messages"], capped_tools = apply_hard_tool_cap(
             chat_body["messages"], chat_body.get("tools"),
         )
+        if capped_tools is not None:
+            chat_body["tools"] = capped_tools
 
         # Adaptive temperature: if the model is in a tool-call loop,
         # elevate temperature to give it variance to break out. Returns
@@ -5669,6 +5676,10 @@ async def proxy(request: Request, path: str):
     if path in ("chat/completions", "v1/chat/completions", "api/chat/completions"):
         try:
             data = json.loads(body)
+            # An explicit "tools": null is equivalent to an absent field —
+            # drop the key so downstream list consumers never see None.
+            if data.get("tools") is None:
+                data.pop("tools", None)
             # NOTE: Planning-lock (#15) is disabled. See /responses path
             # for rationale.
             # data["tools"] = maybe_lock_to_planning(

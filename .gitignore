@@ -68,3 +68,4 @@ logs/
 # Python bytecode caches
 __pycache__/
 *.pyc
+.claude-backups/
