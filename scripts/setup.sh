@@ -338,6 +338,45 @@ else
     echo "    chmod +x $LOCAL_BIN/krull-claude"
 fi
 
+# --- Ensure playwright-mcp MCP server (user-scope, one-time; never touch an existing install) ---
+# Krull uses browser automation (web_fetch with citations, browser_* debugging,
+# session_login) via odysseyalive/playwright-mcp. Bootstrap it here ONLY when it
+# is not already present. "Present" = Claude has a playwright-mcp registration
+# whose target file actually exists on disk — the committed .mcp.json points at a
+# machine-specific path, so a bare registration is not proof of a working install.
+# Every fallible step below is guarded (|| echo) because setup.sh runs under
+# `set -e`; a partial failure here must not abort setup before the sentinel.
+echo ""
+echo "Checking playwright-mcp MCP server..."
+PW_TARGET="$(claude mcp get playwright-mcp 2>/dev/null | grep -oE '/[^[:space:]]+/dist/index\.js' | head -1)"
+if [ -n "$PW_TARGET" ] && [ -f "$PW_TARGET" ]; then
+    echo "[+] playwright-mcp already installed ($PW_TARGET) — leaving it untouched"
+else
+    PW_MISSING=""
+    for c in git node npm claude; do
+        command -v "$c" >/dev/null 2>&1 || PW_MISSING="$PW_MISSING $c"
+    done
+    PW_DIR="$(dirname "$PROJECT_DIR")/playwright-mcp"
+    if [ -n "$PW_MISSING" ]; then
+        echo "[!] Skipping playwright-mcp bootstrap — missing prerequisites:$PW_MISSING"
+        echo "    Install them, then run:"
+        echo "      git clone https://github.com/odysseyalive/playwright-mcp \"$PW_DIR\" && ( cd \"$PW_DIR\" && ./install.sh )"
+    else
+        if [ ! -e "$PW_DIR/.git" ]; then
+            echo "    Cloning odysseyalive/playwright-mcp -> $PW_DIR ..."
+            git clone https://github.com/odysseyalive/playwright-mcp.git "$PW_DIR" \
+                || echo "[!] clone failed — skipping playwright-mcp bootstrap (retry: git clone https://github.com/odysseyalive/playwright-mcp \"$PW_DIR\")"
+        fi
+        if [ -x "$PW_DIR/install.sh" ]; then
+            echo "    Installing playwright-mcp (builds, downloads Chromium ~170MB; may prompt for sudo for system libraries)..."
+            ( cd "$PW_DIR" && ./install.sh ) \
+                || echo "[!] playwright-mcp install did not complete — finish later: ( cd \"$PW_DIR\" && ./install.sh )"
+        else
+            echo "[!] $PW_DIR/install.sh not found — skipping playwright-mcp bootstrap"
+        fi
+    fi
+fi
+
 # --- Sentinel: mark setup complete so start.sh won't re-run it on every boot ---
 mkdir -p "$PROJECT_DIR/data"
 date -Iseconds > "$PROJECT_DIR/data/.setup-complete"

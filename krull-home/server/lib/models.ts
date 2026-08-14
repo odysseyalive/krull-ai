@@ -68,6 +68,17 @@ export const RECOMMENDED_MODELS: RecommendedModel[] = [
     kvBytesPerToken: 120 * 1024,
     nativeMaxCtx: 131072,
   },
+  {
+    key: "gemma4:12b",
+    label: "Gemma 4 · 12B",
+    vram: "~8 GB",
+    description:
+      "Google Gemma 4 dense 12B — matches the older Gemma 4 26B on quality while staying laptop-runnable. A thinking model with native tool calling and strong output-format reliability, the best agentic pick at this size. Its interleaved sliding-window (1024-token) + shared-KV attention keeps context cheap: verified holding the full 128k window fully GPU-resident on a 16 GB card.",
+    bestFor: "16 GB GPUs doing agentic / tool-calling work that needs a large context window kept resident.",
+    weightBytes: 8 * 1024 * 1024 * 1024,
+    kvBytesPerToken: 90 * 1024,
+    nativeMaxCtx: 131072,
+  },
 ];
 
 /**

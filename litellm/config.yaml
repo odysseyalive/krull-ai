@@ -13,31 +13,31 @@ model_list:
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-opus-4-6
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
 
@@ -46,6 +46,19 @@ model_list:
   # is unset — e.g. when claude is launched without the krull-claude shim.
   - model_name: claude-haiku-4-5
     litellm_params:
-      model: openai/gemma4:e4b
+      model: openai/gemma4:12b
+      api_base: http://krull-sse-proxy:8081
+      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+
+  # Wildcard catch-all — any model ID not matched above (e.g. agent-pinned
+  # IDs from claude-workforce: claude-opus-4-8, claude-opus-5, claude-fable-5,
+  # or any hand-typed "Other") resolves to the single active Krull model.
+  # LiteLLM matches explicit model_name entries first and falls through to
+  # "*" only when none match, so the named routes above are unaffected. Same
+  # proxy api_base as every other entry — not a bypass. start.sh's sed keeps
+  # the `model:` target synced to the active OLLAMA_MODEL.
+  - model_name: "*"
+    litellm_params:
+      model: openai/gemma4:12b
       api_base: http://krull-sse-proxy:8081
       api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
