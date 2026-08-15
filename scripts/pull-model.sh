@@ -26,6 +26,11 @@ DEFAULT_PRESENCE_PENALTY="${OLLAMA_PRESENCE_PENALTY:-1.5}"
 DEFAULT_NUM_CTX="${OLLAMA_NUM_CTX:-8192}"
 DEFAULT_NUM_PREDICT="${OLLAMA_NUM_PREDICT:-4096}"
 
+# Preferred quantization suffix (optional): e.g. q4_0, q8_0. When set,
+# pull attempts will try <model>-<quant> first and fall back to the base
+# model if the quantized artifact is not available from Ollama.
+PREFERRED_QUANT="${OLLAMA_PREFERRED_QUANT:-}"
+
 usage() {
     echo "Usage: ./scripts/pull-model.sh <model> [model ...]"
     echo ""
@@ -44,7 +49,7 @@ usage() {
     echo "  num_ctx:          $DEFAULT_NUM_CTX"
     echo "  num_predict:      $DEFAULT_NUM_PREDICT"
     echo ""
-    echo "Set in .env (persistent) or override per-run:"
+    echo "Set in .env (persistent) or override per-run:" 
     echo "  .env:    OLLAMA_TEMPERATURE=0.6"
     echo "  Per-run: TEMPERATURE=0.6 ./scripts/pull-model.sh frob/qwen3.5-instruct:9b"
 }
@@ -80,16 +85,63 @@ else
     fi
 fi
 
-for MODEL in "$@"; do
-    echo "Pulling $MODEL..."
+pull_one() {
+    local target="$1"
+    echo "Pulling target: $target"
     if $IS_MACOS; then
-        ollama pull "$MODEL"
+        if ollama pull "$target"; then
+            return 0
+        else
+            return 1
+        fi
     else
-        docker exec krull-ollama ollama pull "$MODEL"
+        if docker exec krull-ollama ollama pull "$target"; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+for MODEL in "$@"; do
+    echo "Preparing to pull $MODEL..."
+
+    PULLED_MODEL="$MODEL"
+
+    if [ -n "$PREFERRED_QUANT" ]; then
+        # Try quantized candidate first, but only if the model key doesn't already
+        # appear to contain a quant suffix.
+        if [[ "$MODEL" != *"$PREFERRED_QUANT"* ]]; then
+            CANDIDATE="${MODEL}-${PREFERRED_QUANT}"
+            echo "Trying quantized variant: $CANDIDATE"
+            if pull_one "$CANDIDATE"; then
+                PULLED_MODEL="$CANDIDATE"
+            else
+                echo "Quantized variant $CANDIDATE not available; falling back to $MODEL"
+                if ! pull_one "$MODEL"; then
+                    echo "ERROR: failed to pull $MODEL"
+                    exit 1
+                fi
+                PULLED_MODEL="$MODEL"
+            fi
+        else
+            # model already contains quant tag
+            if ! pull_one "$MODEL"; then
+                echo "ERROR: failed to pull $MODEL"
+                exit 1
+            fi
+            PULLED_MODEL="$MODEL"
+        fi
+    else
+        if ! pull_one "$MODEL"; then
+            echo "ERROR: failed to pull $MODEL"
+            exit 1
+        fi
+        PULLED_MODEL="$MODEL"
     fi
 
-    echo "Applying tuned parameters (temp=$TEMPERATURE, top_p=$TOP_P, num_ctx=$NUM_CTX, num_predict=$NUM_PREDICT)..."
-    MODELFILE="FROM $MODEL
+    echo "Applying tuned parameters (tuned target=$PULLED_MODEL) (temp=$TEMPERATURE, top_p=$TOP_P, num_ctx=$NUM_CTX, num_predict=$NUM_PREDICT)..."
+    MODELFILE="FROM $PULLED_MODEL
 PARAMETER temperature $TEMPERATURE
 PARAMETER top_p $TOP_P
 PARAMETER top_k $TOP_K
@@ -103,7 +155,7 @@ PARAMETER num_predict $NUM_PREDICT"
     # then hallucinates a fake user turn). Gemma 4 has the same risk
     # with <end_of_turn>. We add them explicitly so the running tag
     # halts cleanly regardless of renderer behavior.
-    LOWER_MODEL=$(echo "$MODEL" | tr '[:upper:]' '[:lower:]')
+    LOWER_MODEL=$(echo "$PULLED_MODEL" | tr '[:upper:]' '[:lower:]')
     case "$LOWER_MODEL" in
         *qwen*)
             MODELFILE="$MODELFILE
@@ -122,16 +174,16 @@ PARAMETER stop \"<eos>\""
     if $IS_MACOS; then
         TMPFILE=$(mktemp)
         echo "$MODELFILE" > "$TMPFILE"
-        ollama create "$MODEL" -f "$TMPFILE"
+        ollama create "$PULLED_MODEL" -f "$TMPFILE"
         rm -f "$TMPFILE"
     else
         docker exec krull-ollama bash -c "cat > /tmp/Modelfile << EOF
 $MODELFILE
 EOF
-ollama create $MODEL -f /tmp/Modelfile"
+ollama create $PULLED_MODEL -f /tmp/Modelfile"
     fi
 
-    echo "[+] $MODEL ready (tuned)"
+    echo "[+] $PULLED_MODEL ready (tuned)"
     echo ""
 done
 
