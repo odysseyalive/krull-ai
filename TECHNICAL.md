@@ -479,3 +479,22 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 **Library install hangs at 0%:** The bash script runs but the file isn't appearing yet. Check `docker logs krull-home` for the spawned script's error output. If you're behind a corporate proxy, the underlying `curl` may be timing out — try the equivalent CLI command (e.g., `./krull download-knowledge devdocs-python`) directly to see the network error.
 
 **Starting fresh:** `docker compose down` stops everything. Data in `data/` is preserved. To truly wipe: delete the `data/` directory and run `./krull start` again.
+
+### Session metadata file (host-side)
+
+When a host-launched session starts (via `krull-claude`), a small per-session JSON metadata file is written to the host home directory and removed on session exit:
+
+- Path pattern: ~/.krull-session-meta-<session_id>.json (also supports ~/.krull-session-meta.json)
+- Example contents:
+  {
+    "session_id": "1234567890-1234",
+    "agent_max_parallel": 3,
+    "agent_token_budget": 4096,
+    "agent_timeout_seconds": 120,
+    "context_compact_enabled": true,
+    "context_summary_model": "claude-haiku-4-5",
+    "ollama_num_ctx": 131072,
+    "ollama_preferred_quant": "q4_0"
+  }
+
+Why: The proxy and background workers read this host-side, per-session metadata (via the host bind-mount) to enforce per-session limits (agent parallelism, token budgets, per-session compaction behavior) for host-launched sessions. The metadata file is ephemeral (removed at exit) and intended to be read-only for server-side components.
