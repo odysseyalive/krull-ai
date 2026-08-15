@@ -8,6 +8,13 @@ services:
       - ./data/ollama:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
+      # Default context length for any request that doesn't specify num_ctx
+      # (e.g. Open WebUI browser chats). Without this Ollama falls back to its
+      # built-in 4096 default, which clips multi-turn + web-search context and
+      # makes the model "forget" earlier turns. Pinned to the same OLLAMA_NUM_CTX
+      # the proxy requests, so every session — browser or agent — gets the full
+      # window rather than being clipped.
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_NUM_CTX:-131072}
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main

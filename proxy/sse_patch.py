@@ -180,6 +180,17 @@ WEBFETCH_PROXY_URL = os.environ.get(
 )
 SEARCH_RESULTS = int(os.environ.get("SEARCH_RESULTS", "5"))
 NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "131072"))
+# The local model's tuned sampling/output safety envelope, mirroring its
+# Ollama Modelfile PARAMETER lines (temperature 0.5 / top_p 0.8 /
+# num_predict 4096) and the proxy's adaptive-temperature ceiling
+# (compute_session_temperature escalates to at most 0.6). chat_to_ollama_request
+# clamps a frontier client's sampling profile to this envelope so client
+# values may tighten it but never loosen it — the mechanism that stops a
+# frontier max_tokens (~32k) or temperature/top_p 1.0 from stripping the small
+# model's loop damping. Env-overridable so a model swap can retune them.
+LOCAL_TEMP_CAP = float(os.environ.get("KRULL_LOCAL_TEMP_CAP", "0.6"))
+LOCAL_TOP_P_CAP = float(os.environ.get("KRULL_LOCAL_TOP_P_CAP", "0.8"))
+LOCAL_NUM_PREDICT_CAP = int(os.environ.get("KRULL_LOCAL_NUM_PREDICT_CAP", "4096"))
 # Per-tool-result cap for the small-model adapter (task #16). A single
 # Read of a big file can dump tens of thousands of chars into the
 # conversation; after 5-6 such Reads the qwen 9B is past its working
@@ -4678,30 +4689,41 @@ def chat_to_ollama_request(chat_body: dict) -> dict:
         "messages": messages,
         "stream": chat_body.get("stream", False),
         "keep_alive": keep_alive,
-        # Small-model determinism override: force temperature=0 and top_p=1
-        # so the same prompt produces the same output every run. Default
-        # Ollama temperature is ~0.7, which makes the qwen 9B's "use tools"
-        # vs "answer from training" choice essentially a coin flip on
-        # marginal queries. The previous "qʰata mayka?" success was a lucky
-        # roll of those dice; the next run with the same input produced
-        # 1027 chars of hallucination. Tool-driven workflows are far more
+        # Small-model determinism override: force temperature=0 and top_p to
+        # the model's tuned nucleus so the same prompt produces the same output
+        # every run. Default Ollama temperature is ~0.7, which makes the small
+        # model's "use tools" vs "answer from training" choice essentially a
+        # coin flip on marginal queries. Tool-driven workflows are far more
         # valuable as reproducible than as creatively varied.
         "options": {
             "num_ctx": NUM_CTX,
             "temperature": 0.0,
-            "top_p": 1.0,
+            "top_p": LOCAL_TOP_P_CAP,
         },
     }
     if "tools" in chat_body:
         ollama_body["tools"] = chat_body["tools"]
     if "max_tokens" in chat_body:
-        ollama_body["options"]["num_predict"] = chat_body["max_tokens"]
-    # Honor explicit temperature/top_p from the client only if non-zero —
-    # we still allow callers to opt back into sampling if they want.
+        # Clamp the client's output ceiling to the model's tuned num_predict.
+        # A frontier client (Claude Code) sends max_tokens sized for a frontier
+        # model (~32k); passed through verbatim it overrides the small model's
+        # own circuit-breaker, letting a degenerate generation run to the
+        # client's ceiling instead of the model's. Mirrors services/api/
+        # claude.ts's Math.min(maxOutputTokens - 1, requested): the model's
+        # regime is authoritative, the client request clamps against it.
+        ollama_body["options"]["num_predict"] = min(
+            chat_body["max_tokens"], LOCAL_NUM_PREDICT_CAP)
+    # Honor client temperature/top_p only where they TIGHTEN the local model's
+    # tuned envelope. The adaptive loop-breaker's escalations (≤ LOCAL_TEMP_CAP,
+    # set into chat_body before this builder runs) pass through unchanged; the
+    # frontier client's 1.0 defaults — which would strip the small model's
+    # loop-damping — are clamped down.
     if chat_body.get("temperature"):
-        ollama_body["options"]["temperature"] = chat_body["temperature"]
+        ollama_body["options"]["temperature"] = min(
+            chat_body["temperature"], LOCAL_TEMP_CAP)
     if chat_body.get("top_p"):
-        ollama_body["options"]["top_p"] = chat_body["top_p"]
+        ollama_body["options"]["top_p"] = min(
+            chat_body["top_p"], LOCAL_TOP_P_CAP)
     return ollama_body
 
 
