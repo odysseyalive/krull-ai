@@ -34,6 +34,7 @@ data/.update-status
 
 # Local work data — not part of the distribution
 data/aero-work/
+litellm/config.yaml
 
 # Dev scratch at repo root: ad-hoc screenshots and playwright snapshot
 # dumps. Anchored to the repo root so app assets like

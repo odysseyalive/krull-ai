@@ -15,31 +15,31 @@ model_list:
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   - model_name: claude-sonnet-4-20250514
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   - model_name: claude-opus-4-6
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   - model_name: claude-opus-4-20250514
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   - model_name: claude-haiku-4-5-20251001
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   # Claude Code's background calls (session titles, summaries, WebFetch)
   # default to the bare alias claude-haiku-4-5 when ANTHROPIC_SMALL_FAST_MODEL
@@ -48,7 +48,7 @@ model_list:
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
 
   # Wildcard catch-all — any model ID not matched above (e.g. agent-pinned
   # IDs from claude-workforce: claude-opus-4-8, claude-opus-5, claude-fable-5,
@@ -61,4 +61,4 @@ model_list:
     litellm_params:
       model: openai/gemma4:e2b
       api_base: http://krull-sse-proxy:8081
-      api_key: "sk-2acb50f0fc854e1e98df67e223a695ea"
+      api_key: "sk-50467ff8c19b4864add5436a0abe0239"
