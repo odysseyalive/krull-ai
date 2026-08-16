@@ -4684,11 +4684,35 @@ def chat_to_ollama_request(chat_body: dict) -> dict:
     # when tool-call loops take longer than expected between API calls.
     keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
+    # Thinking channel: mirror the Anthropic API contract — extended thinking
+    # is OFF unless the client explicitly opts in (thinking:{type:'enabled'}),
+    # and Claude Code's own bounded summarization/compaction calls force it off
+    # (claude-scripts/services/compact/compact.ts:1305 and
+    # services/awaySummary.ts:44 both pass thinkingConfig:{type:'disabled'}).
+    # A thinking-capable Ollama model defaults to adaptive thinking-ON; left
+    # implicit, Ollama routes the model's reasoning tokens to a channel it
+    # surfaces as `content` ONLY if the thinking block completes. Under the
+    # num_predict clamp below, thinking is truncated before it closes, so the
+    # assistant turn comes back with empty content and no tool call. Sending
+    # think:False sends the token budget to the answer itself.
+    # Match on the VALUE, not presence: an Anthropic thinking block is
+    # {"type": "enabled"|"disabled", ...}, and Claude Code's compaction sends
+    # {"type": "disabled"} verbatim — a truthy dict. Testing presence would
+    # invert that disabled request into think=True and reopen the bug. Only an
+    # explicit enable, or an OpenAI reasoning_effort level, turns thinking on.
+    _thinking = chat_body.get("thinking")
+    _effort = str(chat_body.get("reasoning_effort") or "").strip().lower()
+    think = (
+        (isinstance(_thinking, dict) and _thinking.get("type") == "enabled")
+        or _effort in ("minimal", "low", "medium", "high")
+    )
+
     ollama_body = {
         "model": chat_body.get("model", ""),
         "messages": messages,
         "stream": chat_body.get("stream", False),
         "keep_alive": keep_alive,
+        "think": think,
         # Small-model determinism override: force temperature=0 and top_p to
         # the model's tuned nucleus so the same prompt produces the same output
         # every run. Default Ollama temperature is ~0.7, which makes the small

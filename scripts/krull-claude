@@ -33,9 +33,26 @@ trap cleanup EXIT
 
 # Tell Claude Code the real context window size so its auto-compactor
 # fires at the right threshold. Without this, Claude Code assumes 200K
-# (the real claude-sonnet-4-6 window) but the backend is qwen 9B with
-# 131K. Claude Code's compaction threshold = window - 20K - 13K, so
-# with 131072 it fires at ~98K tokens instead of the default ~167K.
+# (the real claude-sonnet-4-6 window) but the backend holds only
+# OLLAMA_NUM_CTX. Claude Code's compaction threshold = window - 20K - 13K,
+# so a window LARGER than the backend makes CC wait to compact until the
+# summarization prompt itself overflows the backend and comes back empty.
+# The repo .env is the source of truth for OLLAMA_NUM_CTX (the settings
+# page writes it), so read it here instead of hardcoding a value that
+# drifts stale. KRULL_ENV_FILE, or KRULL_REPO/.env, lets the installed
+# copy (~/.local/bin/krull-claude) find the checkout; the dev copy under
+# scripts/ falls back to ../.env next to itself.
+KRULL_ENV_FILE="${KRULL_ENV_FILE:-${KRULL_REPO:+$KRULL_REPO/.env}}"
+if [ -z "$KRULL_ENV_FILE" ]; then
+  _krull_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_krull_self_dir/../.env" ] && KRULL_ENV_FILE="$_krull_self_dir/../.env"
+fi
+KRULL_NUM_CTX=""
+if [ -n "$KRULL_ENV_FILE" ] && [ -f "$KRULL_ENV_FILE" ]; then
+  # OLLAMA_NUM_CTX is a bare integer in .env; take digits only so any stray
+  # whitespace, quoting, or trailing comment cannot leak into the env value.
+  KRULL_NUM_CTX="$(grep -E '^OLLAMA_NUM_CTX=' "$KRULL_ENV_FILE" | tail -1 | grep -oE '[0-9]+' | head -1)"
+fi
 #
 # Local-LLM tuning (each verified against the Claude Code source):
 #   ANTHROPIC_MODEL — pin the main-loop model to a name litellm/config.yaml
@@ -60,7 +77,7 @@ ANTHROPIC_AUTH_TOKEN=sk-local-dev-key \
 ANTHROPIC_BASE_URL=http://localhost:4000 \
 ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6} \
 ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-claude-haiku-4-5-20251001} \
-CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-131072} \
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-${KRULL_NUM_CTX:-65536}} \
 MAX_THINKING_TOKENS=${MAX_THINKING_TOKENS:-0} \
 DISABLE_PROMPT_CACHING=${DISABLE_PROMPT_CACHING:-1} \
 DISABLE_COST_WARNINGS=${DISABLE_COST_WARNINGS:-1} \
