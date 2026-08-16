@@ -149,26 +149,6 @@ export const ENV_SCHEMA: EnvField[] = [
     affects: ["krull-sse-proxy"],
   },
   {
-    key: "CONTEXT_COMPACT_ENABLED",
-    label: "Enable async compaction",
-    description:
-      "Enable async context compaction (job queue + background summarizer). Read by the krull-claude wrapper at launch — applies on the next krull-claude session, not to a running one. Set to true or false.",
-    kind: "text",
-    default: "true",
-    group: "Context management",
-    affects: [],
-  },
-  {
-    key: "CONTEXT_SUMMARY_MODEL",
-    label: "Summary model",
-    description:
-      "Model used for abstractive summarization of old history. Leave empty to reuse the same model mapping the chat uses.",
-    kind: "text",
-    default: "",
-    group: "Context management",
-    affects: ["krull-sse-proxy"],
-  },
-  {
     key: "KRULL_TOOL_CALL_HARD_CAP",
     label: "Tool-call hard cap",
     description:

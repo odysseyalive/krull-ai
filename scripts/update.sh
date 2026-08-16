@@ -9,7 +9,7 @@ REG_DEBUG="$PROJECT_DIR/data/webui/registration-debug.json"
 HOOKSDIR="$SCRIPT_DIR/update-hooks.d"
 
 # Ensure data directories exist
-mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/data/webui" "$PROJECT_DIR/data/logs" "$PROJECT_DIR/data/context_jobs" "$PROJECT_DIR/data/context_store"
+mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/data/webui" "$PROJECT_DIR/data/logs"
 
 # Parse args
 FORCE=0
