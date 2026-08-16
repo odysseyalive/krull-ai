@@ -655,6 +655,86 @@ def _strip_system_reminders(content: str) -> str:
     return _SYSTEM_REMINDER_RE.sub("", content).strip()
 
 
+def strip_tool_result_reminders(messages: list) -> list:
+    """Strip Claude Code's <system-reminder> annotation blocks from
+    role=tool result content.
+
+    These blocks (MCP server instructions, <total_tokens> counters, hook
+    notices) are display/routing metadata Claude Code appends to tool
+    outputs — they are NOT part of what the tool actually returned. On the
+    small model they routinely dwarf the real output (a ~20-char `ls docs`
+    result arrived carrying a ~2.4 KB MCP-instructions reminder) and derail
+    the next-action decision — observed: the model echoed a fake
+    "waiting for the result" system-reminder instead of descending into the
+    directory it had just listed. Stripping them leaves the model reasoning
+    over the actual tool output. Generic and content-agnostic: it removes
+    only the reminder wrapper Claude Code adds, for every tool and skill.
+    The real error text (No such file / EISDIR / etc.) lives outside the
+    reminder wrapper, so path-miss detection and failure scanners are
+    unaffected."""
+    changed = 0
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        c = m.get("content")
+        if isinstance(c, str) and "<system-reminder>" in c:
+            m["content"] = _strip_system_reminders(c)
+            changed += 1
+        elif isinstance(c, list):
+            for part in c:
+                if (isinstance(part, dict) and isinstance(part.get("text"), str)
+                        and "<system-reminder>" in part["text"]):
+                    part["text"] = _strip_system_reminders(part["text"])
+                    changed += 1
+    if changed:
+        proxy_log("FILTER", f"+strip_tool_reminders ({changed} tool results)")
+    return messages
+
+
+def coalesce_assistant_tool_narration(messages: list) -> list:
+    """Merge an assistant tool-call message with an adjacent assistant
+    text-only message from the SAME turn into one assistant message that
+    carries both the narration text and the tool_calls.
+
+    Claude Code's Responses output for a single turn is often TWO items — a
+    function_call and a separate text block ("Let me list the contents of
+    docs...") — which responses_input_to_messages converts into two adjacent
+    assistant messages: one {tool_calls, content:""} and one {content:text}.
+    To the small model, that standalone narration sitting before the tool
+    result reads as an unfulfilled promise ("I said I'd list it but I have no
+    output yet"), so it stalls and asks the user to "provide the output"
+    instead of consuming the tool result it already has. Empirically
+    (gemma4:e2b, real captured payload) this split causes a hard stall;
+    merging the text onto the tool-call message fixes it 4/4. Two adjacent
+    assistant messages with no tool result between them belong to the same
+    turn, so merging is safe. Generic and content-agnostic — it reshapes
+    message structure only, never inspecting content."""
+    out: list = []
+    for m in messages:
+        if (m.get("role") == "assistant" and out
+                and out[-1].get("role") == "assistant"):
+            prev = out[-1]
+            prev_tc = bool(prev.get("tool_calls"))
+            cur_tc = bool(m.get("tool_calls"))
+            # Merge only when exactly one of the pair carries the tool call
+            # and the other is text-only — i.e. same-turn narration + action.
+            if prev_tc != cur_tc:
+                tool_calls = prev.get("tool_calls") or m.get("tool_calls")
+                texts = [
+                    _content_text(prev.get("content", "")),
+                    _content_text(m.get("content", "")),
+                ]
+                merged = "\n".join(t for t in texts if t and t.strip()).strip()
+                out[-1] = {
+                    "role": "assistant",
+                    "content": merged,
+                    "tool_calls": tool_calls,
+                }
+                continue
+        out.append(m)
+    return out
+
+
 def _parse_slash_command(content: str) -> tuple[str, str, str] | None:
     """If the user content represents a slash command in either of the
     two shapes Claude Code uses, return (skill_name, args, shape).
@@ -1961,6 +2041,132 @@ def _count_recent_tool_failures(messages: list, n: int = 5) -> tuple[int, int, l
             snippet = content.strip()[:90].replace("\n", " ")
             summaries.append(snippet)
     return (failures, len(tool_results), summaries)
+
+
+# A failed file-discovery tool result means the model's last path guess was
+# wrong in a RECOVERABLE way: the path does not exist (search for the real
+# one), or it named a directory where a file was expected (list/descend into
+# it). In both cases the correct move is to try again with its tools, not to
+# give up or ask the user. Same post-tool-enrichment shape the proxy already
+# uses for procedure maps (modeled on Claude Code's PostToolUse hooks,
+# services/tools/toolHooks.ts:runPostToolUseHooks): react to the tool result
+# the moment the model is about to consume it. Generic across every tool,
+# path, and skill — it inspects only the SHAPE of the error (universal errno
+# text: ENOENT-class "no such file", EISDIR "is a directory"), never its
+# content.
+_PATH_MISS_PATTERNS = [
+    re.compile(r"\bNo such file or directory\b", re.IGNORECASE),
+    re.compile(r"\bFile does not exist\b", re.IGNORECASE),
+    re.compile(r"\bcannot find\b", re.IGNORECASE),
+    re.compile(r"\bnot found\b", re.IGNORECASE),
+    re.compile(r"\bEISDIR\b", re.IGNORECASE),
+    re.compile(r"\billegal operation on a directory\b", re.IGNORECASE),
+    re.compile(r"\bis a directory\b", re.IGNORECASE),
+]
+
+# A large file (typically a multi-page PDF) that the Read tool refuses to
+# return in one call, instructing the caller to use the pages parameter.
+# The tool's own error already says what to do; the small model just needs
+# to be pushed to follow through instead of narrating/stopping.
+_LARGE_FILE_PATTERNS = [
+    re.compile(r"too many (?:pages|lines|to read)", re.IGNORECASE),
+    re.compile(r"\buse the pages parameter\b", re.IGNORECASE),
+    re.compile(r"\bpages parameter\b", re.IGNORECASE),
+]
+
+# Shared header prefix on every recovery hint — the idempotency check keys
+# on it so no class double-injects.
+_RECOVERY_MARKER = "[Recovery —"
+
+PATH_MISS_RECOVERY_HINT = (
+    "[Recovery — file lookup failed, use your tools, do not ask]\n"
+    "Your last file operation failed because the path was wrong. Do NOT ask "
+    "the user and do NOT give up — fix it yourself before responding:\n"
+    "- If the path does NOT exist: search for it from the working directory "
+    "with Bash(command=find . -iname \"*<part-of-the-name>*\" -not -path \"*/.*\").\n"
+    "- If you tried to read a DIRECTORY (EISDIR / 'is a directory'): it is a "
+    "folder, not a file. List what is inside it with Bash(command=ls "
+    "\"<that-directory>\"), or find the file directly with Bash(command=find "
+    "\"<that-directory>\" -type f -iname \"*<extension>\"), then Read the actual "
+    "file it contains.\n"
+    "- The working directory's top-level contents are listed in the project "
+    "context above.\n"
+    "Only after a real search returns nothing may you ask the user for help."
+)
+
+LARGE_FILE_RECOVERY_HINT = (
+    "[Recovery — large PDF: extract its text, do not read page images]\n"
+    "The PDF is too large to Read in one call. Do NOT ask the user and do NOT "
+    "stop. Do NOT keep using Read with pages on this PDF — rendered page "
+    "images are unreliable to summarize. Instead, extract its TEXT:\n"
+    "1. Run: Bash(command=pdftotext -l 20 \"<same file path>\" -). This prints "
+    "the clean text of pages 1-20 to stdout. pdftotext is installed and "
+    "permitted — use it.\n"
+    "2. Read that text. If you need more, get the next range with "
+    "Bash(command=pdftotext -f 21 -l 40 \"<same file path>\" -).\n"
+    "3. Write your answer/summary directly from the extracted text.\n"
+    "Only if pdftotext genuinely errors (command not found) should you fall "
+    "back to Read(file_path=\"<same file>\", pages=\"1-10\"). Never abandon the "
+    "task because the whole file will not load at once."
+)
+
+
+def _last_recoverable_error_class(messages: list) -> str | None:
+    """Classify the most recent real (non proxy-injected) message. Returns
+    'path_miss', 'large_file', or None. Turn-precise: it only inspects the
+    last tool result, so the recovery hint lands exactly when the model is
+    about to react to a recoverable tool error — before it decides to give
+    up or ask the user."""
+    for m in reversed(messages):
+        role = m.get("role")
+        if role == "system":
+            # Skip proxy-injected system messages when locating the last
+            # real turn; they are not part of the model's tool exchange.
+            if "[Krull" in _content_text(m.get("content", "")):
+                continue
+            return None
+        if role != "tool":
+            return None
+        content = _content_text(m.get("content", ""))
+        # Large-file check first: its result text can also contain generic
+        # words, so match the specific "pages parameter" shape before the
+        # broader path-miss patterns.
+        if any(p.search(content) for p in _LARGE_FILE_PATTERNS):
+            return "large_file"
+        if any(p.search(content) for p in _PATH_MISS_PATTERNS):
+            return "path_miss"
+        return None
+    return None
+
+
+def inject_path_miss_recovery(messages: list) -> list:
+    """When the latest tool result is a recoverable tool error (a bad path,
+    a directory read, or a too-large file), append a tailored recovery
+    directive so the model follows through with its tools instead of asking
+    the user or stopping. Idempotent."""
+    cls = _last_recoverable_error_class(messages)
+    if cls is None:
+        return messages
+    for m in messages:
+        if m.get("role") == "system" and _RECOVERY_MARKER in _content_text(m.get("content", "")):
+            return messages
+        if m.get("role") == "user" and _RECOVERY_MARKER in _content_text(m.get("content", "")):
+            return messages
+    hint = LARGE_FILE_RECOVERY_HINT if cls == "large_file" else PATH_MISS_RECOVERY_HINT
+    proxy_log("FILTER", f"+recovery_hint ({cls})")
+    # Appended at the END as a USER message, not a system message. Gemma has
+    # no native system role, so Ollama's chat template folds/merges system
+    # blocks — under a large multi-system context (Claude Code's ~20K-token
+    # prompt + the proxy's own system injections) a trailing *system*
+    # corrective is relocated/diluted and does not steer the model.
+    # Empirically verified against gemma4:e2b at real scale: an identical
+    # hint appended as `system` leaves the model asking the user, while the
+    # same hint appended as `user` makes it recover with the right tool call.
+    # A trailing user turn is the channel Gemma reliably attends to, and it is
+    # invisible to the client (the proxy injects it only into the outbound
+    # Ollama request).
+    messages.append({"role": "user", "content": hint})
+    return messages
 
 
 DATA_STARVATION_HINT_TEMPLATE = (
@@ -4359,6 +4565,63 @@ def _discover_env_variables(project_root: str) -> list[dict]:
     return results
 
 
+# Bias-toward-action directive. Modeled on Claude Code's own system-prompt
+# "Bias toward action" block (claude-scripts/constants/prompts.ts:890 —
+# "Read files, search code, explore the project ... all without asking" and
+# "Do not narrate what you're about to do — just do it"). Generic across
+# every skill and request: it names no skill, path, file type, or input.
+# Closes the first-turn corner none of the after-tool-work safety nets
+# cover — an actionable request answered with text and zero tool calls.
+BIAS_TO_ACTION_DIRECTIVE = (
+    "Acting on requests: when the user asks for something involving files or "
+    "this project, act with your tools — do not ask for information you can "
+    "find yourself, and do not only describe what you intend to do.\n"
+    "- Locate files yourself: use Bash (ls, find <dir> -iname \"*<hint>*\") or "
+    "Read. Never ask the user for a path you can discover from the working "
+    "directory listed above.\n"
+    "- If you state an action, the SAME reply MUST contain the tool call that "
+    "performs it. Announcing intent without a tool call is a failure to act."
+)
+
+
+def _working_dir_listing(cwd: str, cap: int = 50) -> list[str]:
+    """Shallow (top-level only) listing of the working directory so the
+    model can SEE what's there instead of asking the user for a path.
+
+    Same 'expose filesystem structure the model cannot otherwise see'
+    principle already ratified for skill resources
+    (_build_active_skill_manifest / _discover_skills_in_dir) and the
+    working-dir twin of Claude Code's env directory snapshot. Generic:
+    no file type, name, or subdirectory is special-cased. Directories are
+    marked with a trailing slash; noise dirs (_PASSAGE_SKIP_NAMES) and
+    dotfiles are skipped and counted into the truncation tail so the
+    listing stays a compact head start, not a full tree."""
+    try:
+        entries = sorted(
+            os.scandir(cwd),
+            key=lambda e: (not e.is_dir(), e.name.lower()),
+        )
+    except OSError:
+        return []
+    lines: list[str] = []
+    skipped = 0
+    for e in entries:
+        if e.name.startswith(".") or e.name in _PASSAGE_SKIP_NAMES:
+            skipped += 1
+            continue
+        if len(lines) >= cap:
+            break
+        try:
+            is_dir = e.is_dir()
+        except OSError:
+            is_dir = False
+        lines.append(f"  {e.name}/" if is_dir else f"  {e.name}")
+    remaining = len(entries) - skipped - len(lines)
+    if remaining > 0:
+        lines.append(f"  … (+{remaining} more — list with Bash 'ls')")
+    return lines
+
+
 class ProjectContext:
     """Resolved per-cwd project state, cached in PROJECT_CACHE."""
 
@@ -4407,6 +4670,23 @@ class ProjectContext:
             "[End Krull Project Context]",
         ]
 
+    def _working_dir_section(self) -> list[str]:
+        """Top-level working-directory listing — the model's head start on
+        finding files without asking the user for a path. Kept in BOTH the
+        full and static messages (unlike the skill listing) because the
+        model needs to see where files are on every turn it might act, and
+        the proxy's injected system messages are not persisted back into
+        Claude Code's history."""
+        listing = _working_dir_listing(self.cwd)
+        if not listing:
+            return []
+        return [
+            "",
+            "Working directory contents (top level — use Bash 'ls'/'find' "
+            "or Read to go deeper; do not ask the user for paths you can "
+            "discover here):",
+        ] + listing
+
     def full_message(self, budget_chars: int) -> str:
         """Full message including the skill listing. Used on turn 1."""
         listing = format_skill_listing(self.skills, budget_chars)
@@ -4420,13 +4700,19 @@ class ProjectContext:
                 "Skill resources (top-level subdirectories visible to the proxy — read or list these as the skill's procedure directs):",
                 resources,
             ]
+        parts += self._working_dir_section()
         parts += self._env_section()
+        parts += ["", BIAS_TO_ACTION_DIRECTIVE]
         parts += self._footer()
         return "\n".join(parts)
 
     def static_message(self) -> str:
         """Compact message without the skill listing. Used on turns 2+."""
-        parts = self._header() + self._env_section() + self._footer()
+        parts = self._header()
+        parts += self._working_dir_section()
+        parts += self._env_section()
+        parts += ["", BIAS_TO_ACTION_DIRECTIVE]
+        parts += self._footer()
         return "\n".join(parts)
 
 
@@ -4590,6 +4876,11 @@ async def apply_filters(
     through from the request handlers so this filter (and future ones)
     can inspect what's available.
     """
+    # Normalize message structure first: fold same-turn assistant
+    # narration into its tool-call message so the small model doesn't read
+    # the narration as an unfulfilled promise and stall (see the function
+    # docstring). Structural only; runs before any content injection.
+    messages = coalesce_assistant_tool_narration(messages)
     if ENABLE_TRUTH_GUARD:
         messages = inject_truth_guard(messages)
     if ENABLE_DATE:
@@ -4633,6 +4924,7 @@ async def apply_filters(
             messages = await inject_map_search(messages)
         if ENABLE_WEB_SEARCH:
             messages = await inject_web_search(messages)
+    messages = strip_tool_result_reminders(messages)
     messages = inject_project_context(messages)
     messages = inject_slash_command_protocol(messages)
     messages = inject_procedure_maps(messages)
@@ -4650,6 +4942,10 @@ async def apply_filters(
     # detection logic counts substantial tool results in the final message
     # state, so running it here sees the true picture.
     messages = inject_synthesis_directive(messages)
+    # Path-miss recovery is appended last (after synthesis) so that when a
+    # path lookup just failed, the recovery instruction is the final,
+    # highest-attention message the model sees before it responds.
+    messages = inject_path_miss_recovery(messages)
     return messages
 
 
@@ -4702,10 +4998,24 @@ def chat_to_ollama_request(chat_body: dict) -> dict:
     # explicit enable, or an OpenAI reasoning_effort level, turns thinking on.
     _thinking = chat_body.get("thinking")
     _effort = str(chat_body.get("reasoning_effort") or "").strip().lower()
-    think = (
+    _client_thinks = (
         (isinstance(_thinking, dict) and _thinking.get("type") == "enabled")
         or _effort in ("minimal", "low", "medium", "high")
     )
+    # Agentic turns think, answer turns don't. Empirically (gemma4:e2b, real
+    # captured payload, temp=0.0, 4 samples each) the model's tool-vs-text
+    # DECISION on a marginal agentic turn is governed by thinking: with
+    # think=False a path-miss recovery refuses 4/4 ("I can't find it, give me
+    # the path"); with think=True it reasons through and recovers 4/4 (issues
+    # the find/ls call). So whenever tools are on the table, let the model
+    # reason. The empty-content bug this file's think:False default guards
+    # against is specifically thinking TRUNCATED by a too-small num_predict —
+    # it does not occur at the tuned 4096 budget, where thinking completes and
+    # the tool call follows (verified: think=True never returned empty at
+    # num_predict=4096). Tool-less turns (pure text answers, summarization,
+    # compaction) keep thinking OFF — they have no marginal tool decision to
+    # reason about and are the ones most exposed to the truncation bug.
+    think = _client_thinks or bool(chat_body.get("tools"))
 
     ollama_body = {
         "model": chat_body.get("model", ""),
@@ -5448,8 +5758,21 @@ async def proxy(request: Request, path: str):
         # 0.0 for normal operation; chat_to_ollama_request only honors
         # the override when it's > 0.
         elevated_temp = compute_session_temperature(chat_body["messages"])
+        # The proxy is the SOLE authority on the local model's sampling
+        # temperature — always assign the computed value, overwriting any
+        # client-sent temperature. A frontier client (Claude Code) sends
+        # temperature≈1.0; when that bled through it was clamped only to
+        # LOCAL_TEMP_CAP (0.6), which silently defeated the determinism
+        # override in chat_to_ollama_request. Empirically (gemma4:e2b, real
+        # captured payload, 8 samples) temp=0.6 makes the model's "call a
+        # tool vs. answer in text" decision a coin flip — ~37% of marginal
+        # agentic turns refuse/ask instead of acting; temp=0.0 recovers 8/8.
+        # compute_session_temperature returns 0.0 normally and raises it
+        # (≤0.6) only to break detected loops/stalls, so escalation still
+        # works. 0.0 is falsy, so chat_to_ollama_request's client-tighten
+        # clamp is skipped and the base determinism override stands.
+        chat_body["temperature"] = elevated_temp
         if elevated_temp > 0:
-            chat_body["temperature"] = elevated_temp
             proxy_log("FILTER", f"+temp_escalation (loop detected, temp={elevated_temp})",
                       data={"temp": elevated_temp})
 
@@ -5749,8 +6072,12 @@ async def proxy(request: Request, path: str):
 
             # Adaptive temperature: see /responses path for rationale.
             elevated_temp = compute_session_temperature(data["messages"])
+            # Proxy is the sole temperature authority — always overwrite the
+            # client value so a frontier client's ~1.0 never bleeds through to
+            # the LOCAL_TEMP_CAP (0.6) coin-flip regime. See the responses-path
+            # note above; 0.0 is deterministic, escalation still fires on loops.
+            data["temperature"] = elevated_temp
             if elevated_temp > 0:
-                data["temperature"] = elevated_temp
                 proxy_log("FILTER", f"+temp_escalation (loop detected, temp={elevated_temp})")
 
             ollama_body = chat_to_ollama_request(data)
