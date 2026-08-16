@@ -117,6 +117,10 @@ services:
     command: ["--config", "/app/config/config.yaml", "--port", "4000"]
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-dev-key}
+      # Open WebUI API key the model routes authenticate with. Referenced
+      # by litellm/config.yaml as os.environ/KRULL_WEBUI_API_KEY. Provided
+      # from .env (gitignored); setup.sh mints and stores it there.
+      - KRULL_WEBUI_API_KEY=${KRULL_WEBUI_API_KEY:-}
 
   tileserver:
     image: ghcr.io/maplibre/martin:latest

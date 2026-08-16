@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 LOGFILE="$PROJECT_DIR/data/.update-log"
 STATUSFILE="$PROJECT_DIR/data/.update-status"
-REG_DEBUG="$PROJECT_DIR/data/webui/registration-debug.json"
 HOOKSDIR="$SCRIPT_DIR/update-hooks.d"
 
 # Ensure data directories exist
@@ -21,13 +20,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Helper to write status JSON
+# Helper to write status JSON. The message is handed to python via the
+# environment (not string-interpolated into the source) so quotes,
+# backslashes, and $ in the text can never break the JSON or the shell.
 write_status() {
   local phase="$1"; shift
   local msg="$*"
-  cat > "$STATUSFILE" <<JSON
-{"phase": "$phase", "timestamp": $(date +%s), "message": $(python3 -c "import json,sys; print(json.dumps(\"$msg\"))")}
-JSON
+  local ts
+  ts=$(date +%s)
+  PHASE="$phase" TS="$ts" MSG="$msg" python3 - <<'PY' > "$STATUSFILE"
+import json, os
+print(json.dumps({
+    "phase": os.environ.get("PHASE", ""),
+    "timestamp": int(os.environ.get("TS", "0")),
+    "message": os.environ.get("MSG", ""),
+}))
+PY
 }
 
 # Start logging
@@ -40,9 +48,14 @@ write_status started "Updater started"
 
 cd "$PROJECT_DIR"
 
-# Source .env if present (some compose settings depend on it)
+# Source .env if present. Some compose settings depend on it — notably
+# COMPOSE_FILE, which selects the platform/GPU override files. A bad line
+# in .env must not abort the whole update under `set -e`, hence `|| ...`.
 if [ -f ".env" ]; then
-  set -a; source .env; set +a || true
+  set -a
+  # shellcheck disable=SC1091
+  source .env || echo "Warning: .env could not be fully sourced; continuing."
+  set +a
 fi
 
 echo "Fetching remote..."
@@ -68,7 +81,7 @@ fi
 
 # Try fast-forward merge
 if git merge --ff-only FETCH_HEAD; then
-  echo "Fast-forwarded to remote." 
+  echo "Fast-forwarded to remote."
 else
   if [ "$FORCE" -eq 1 ]; then
     echo "Non-fast-forward; force-reset to remote (after backup)."
@@ -94,58 +107,7 @@ echo "Rebuilding locally-built services..."
 docker compose --project-directory "$PROJECT_DIR" build
 
 echo "Recreating containers with new images..."
-# Do not attempt to recreate the updater/sidecar itself if present; rely on compose to handle
 docker compose --project-directory "$PROJECT_DIR" up -d --force-recreate
-
-# Run setup to reprovision webui filters and other one-time steps
-echo "Re-running setup.sh (provisioning)..."
-"$SCRIPT_DIR/setup.sh"
-
-# Attempt to discover Open WebUI API token from litellm/config.yaml (preferred)
-TOKEN=""
-if [ -f "$PROJECT_DIR/litellm/config.yaml" ]; then
-  TOKEN=$(python3 - <<PY
-import re,yaml,sys
-p='$PROJECT_DIR/litellm/config.yaml'
-try:
-    import ruamel.yaml as ry
-except Exception:
-    ry=None
-try:
-    s=open(p).read()
-    m=re.search(r'api_key:\s*"([^"]+)"', s)
-    if m:
-        print(m.group(1))
-    else:
-        # fallback: look for api_key: value without quotes
-        m2=re.search(r'api_key:\s*([^\s\n]+)', s)
-        if m2:
-            print(m2.group(1))
-except Exception:
-    pass
-PY
-)
-fi
-
-# Also allow WEBUI_API_TOKEN env var in .env
-if [ -z "$TOKEN" ] && [ -n "${WEBUI_API_TOKEN:-}" ]; then
-  TOKEN="$WEBUI_API_TOKEN"
-fi
-
-# Run function registration if we have a token
-if [ -n "$TOKEN" ]; then
-  echo "Registering functions with Open WebUI..."
-  mkdir -p "$PROJECT_DIR/data/webui"
-  if TOKEN="$TOKEN" "$SCRIPT_DIR/register-functions.sh" > "$REG_DEBUG" 2>&1; then
-    echo "Functions registered successfully. Debug output at $REG_DEBUG"
-  else
-    echo "Function registration failed; debug at $REG_DEBUG"
-    write_status partial "Function registration failed; see $REG_DEBUG"
-  fi
-else
-  echo "No Open WebUI token found; skipping automatic function registration."
-  echo "If you want automated registration, set api_key in litellm/config.yaml or WEBUI_API_TOKEN in .env"
-fi
 
 # Run any update hooks
 if [ -d "$HOOKSDIR" ]; then
@@ -159,45 +121,60 @@ if [ -d "$HOOKSDIR" ]; then
   done
 fi
 
-# Health checks
+# Run setup LAST, as the final provisioning pass, so everything is
+# (re)provisioned against the freshly-updated stack: Open WebUI filters,
+# the LiteLLM -> Open WebUI API key, the krull-claude CLI, and the setup
+# sentinel. setup.sh is the single source of truth for filter
+# registration — it installs each function with the correct id, name,
+# description, and filter type — which is why update.sh no longer runs a
+# separate registration pass of its own.
+echo "Running setup (final provisioning pass)..."
+"$SCRIPT_DIR/setup.sh"
+
+# Health checks. Each probe is retried for a short window: setup.sh
+# restarts LiteLLM, and a just-recreated container may still be coming
+# up, so a single-shot probe would report a healthy service as failed.
 echo "Performing health checks..."
 HEALTH_OK=1
-# Open WebUI
-if docker exec krull-webui curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/config 2>/dev/null | grep -q "200"; then
-  echo "Open WebUI: OK"
-else
-  echo "Open WebUI: FAIL"; HEALTH_OK=0
-fi
-# LiteLLM
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/ 2>/dev/null | grep -q "200"; then
-  echo "LiteLLM: OK"
-else
-  echo "LiteLLM: FAIL"; HEALTH_OK=0
-fi
-# SSE proxy
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:4001/api/health 2>/dev/null | grep -q "200"; then
-  echo "SSE proxy: OK"
-else
-  echo "SSE proxy: endpoint /api/health not healthy or not present — try /api/config as fallback"
-  if curl -s -o /dev/null -w "%{http_code}" http://localhost:4001/api/config 2>/dev/null | grep -q "200"; then
-    echo "SSE proxy: OK (via /api/config)"
-  else
-    echo "SSE proxy: FAIL"; HEALTH_OK=0
-  fi
-fi
-# Ollama
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/api/tags 2>/dev/null | grep -q "200"; then
-  echo "Ollama: OK"
-else
-  echo "Ollama: FAIL"; HEALTH_OK=0
-fi
 
-if [ $HEALTH_OK -eq 1 ]; then
+# Poll a check command until it succeeds or the timeout (seconds) elapses.
+wait_for() {
+  local label="$1"; local timeout="$2"; shift 2
+  local waited=0
+  until "$@" >/dev/null 2>&1; do
+    if [ "$waited" -ge "$timeout" ]; then
+      echo "$label: FAIL"
+      return 1
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo "$label: OK"
+  return 0
+}
+
+# Open WebUI ships curl in its image; probe its config endpoint from inside the container.
+check_webui()   { docker exec krull-webui curl -sf -o /dev/null http://localhost:8080/api/config; }
+# LiteLLM is published on :4000 and returns 200 at the root.
+check_litellm() { curl -sf -o /dev/null http://localhost:4000/; }
+# The SSE proxy is published on :4001; it has no dedicated health route,
+# but its catch-all returns 200 at the root.
+check_proxy()   { curl -sf -o /dev/null http://localhost:4001/; }
+# Ollama's port is not published to the host and its image has no curl,
+# so check it from inside the container with the ollama CLI.
+check_ollama()  { docker exec krull-ollama ollama list; }
+
+wait_for "Open WebUI" 30 check_webui   || HEALTH_OK=0
+wait_for "LiteLLM"    60 check_litellm || HEALTH_OK=0
+wait_for "SSE proxy"  30 check_proxy   || HEALTH_OK=0
+wait_for "Ollama"     30 check_ollama  || HEALTH_OK=0
+
+if [ "$HEALTH_OK" -eq 1 ]; then
   write_status done "Update completed successfully"
   echo "Update finished successfully."
   exit 0
 else
   write_status failed "One or more health checks failed — inspect $LOGFILE"
-  echo "Update finished with failures. Check $LOGFILE and $REG_DEBUG"
+  echo "Update finished with failures. Check $LOGFILE"
   exit 2
 fi

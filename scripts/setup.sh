@@ -292,31 +292,51 @@ else
     echo "[!] sample_prompts/voice-profile.md not found — skipping system prompt injection"
 fi
 
-# --- Generate API key for LiteLLM → Open WebUI connection ---
+# --- Provision the LiteLLM → Open WebUI API key ---
+# The key lives in .env (gitignored) as KRULL_WEBUI_API_KEY, and
+# litellm/config.yaml references it via `api_key: os.environ/...`. Keeping
+# the secret out of the tracked config means setup never dirties a
+# versioned file, so `./krull update` isn't blocked by config drift.
+# The key is persisted in Open WebUI's database (a bind mount), so a
+# stored key stays valid across container recreation — we mint a new one
+# only when none is stored yet. To force rotation, delete the
+# KRULL_WEBUI_API_KEY line from .env and re-run setup.
 echo ""
 echo "Configuring LiteLLM → Open WebUI API key..."
 
-API_KEY=$(webui_api POST "/api/v1/auths/api_key" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
+ENV_FILE="$PROJECT_DIR/.env"
+touch "$ENV_FILE"
 
-if [ -n "$API_KEY" ]; then
-    # Update litellm config with the real API key
-    python3 << PYEOF
-import re
-with open('$PROJECT_DIR/litellm/config.yaml') as f:
-    content = f.read()
-content = re.sub(r'api_key:\s*"[^"]*"', 'api_key: "$API_KEY"', content)
-content = re.sub(r'api_base:\s*http://krull-webui:8080(?!/api)', 'api_base: http://krull-webui:8080/api', content)
-with open('$PROJECT_DIR/litellm/config.yaml', 'w') as f:
-    f.write(content)
-PYEOF
-    echo "[+] LiteLLM config updated with Open WebUI API key"
-    echo "    Restarting LiteLLM..."
-    docker restart krull-litellm > /dev/null 2>&1
-    echo "[+] LiteLLM restarted"
+EXISTING_KEY=$(grep -E '^KRULL_WEBUI_API_KEY=' "$ENV_FILE" | head -n1 | cut -d= -f2-)
+
+if [ -n "$EXISTING_KEY" ]; then
+    echo "[=] Reusing existing Open WebUI API key from .env"
 else
-    echo "[!] Could not generate API key. LiteLLM may need manual configuration."
-    echo "    Generate a key in Open WebUI: Settings > Account > API Keys"
-    echo "    Then update api_key values in litellm/config.yaml"
+    NEW_KEY=$(webui_api POST "/api/v1/auths/api_key" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
+    if [ -n "$NEW_KEY" ]; then
+        # Upsert into .env (replace any empty placeholder line, else append).
+        if grep -qE '^KRULL_WEBUI_API_KEY=' "$ENV_FILE"; then
+            TMP=$(mktemp)
+            grep -vE '^KRULL_WEBUI_API_KEY=' "$ENV_FILE" > "$TMP"
+            printf 'KRULL_WEBUI_API_KEY=%s\n' "$NEW_KEY" >> "$TMP"
+            mv "$TMP" "$ENV_FILE"
+        else
+            printf 'KRULL_WEBUI_API_KEY=%s\n' "$NEW_KEY" >> "$ENV_FILE"
+        fi
+        echo "[+] Minted Open WebUI API key and stored it in .env"
+        # A plain restart reuses the environment set at container creation,
+        # so recreate LiteLLM to inject the new KRULL_WEBUI_API_KEY value.
+        echo "    Recreating LiteLLM to apply the key..."
+        if docker compose --project-directory "$PROJECT_DIR" up -d --force-recreate litellm > /dev/null 2>&1; then
+            echo "[+] LiteLLM recreated"
+        else
+            echo "[!] Could not recreate LiteLLM automatically — run ./krull start to apply."
+        fi
+    else
+        echo "[!] Could not generate an API key. LiteLLM may need manual configuration."
+        echo "    Generate a key in Open WebUI: Settings > Account > API Keys, then add"
+        echo "    KRULL_WEBUI_API_KEY=<key> to .env and run ./krull start."
+    fi
 fi
 
 # --- Install krull-claude to ~/.local/bin ---
