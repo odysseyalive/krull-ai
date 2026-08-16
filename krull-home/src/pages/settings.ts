@@ -5,7 +5,6 @@ import { ModelPicker } from "../components/ModelPicker";
 import {
   fetchEnv,
   fetchModels,
-  restartContainer,
   saveEnv,
   streamJob,
   type ContextSuggestion,
@@ -332,14 +331,6 @@ export async function SettingsPage(): Promise<HTMLElement> {
   saveBtn.className = "btn btn--primary";
   saveBtn.textContent = "Save changes";
 
-  const restartBtn = document.createElement("button");
-  restartBtn.type = "button";
-  restartBtn.className = "btn btn--ghost";
-  restartBtn.textContent = "Restart affected services";
-  restartBtn.disabled = true;
-
-  let lastAffected: string[] = [];
-
   saveBtn.addEventListener("click", async () => {
     const values: Record<string, string> = {};
     for (const [k, input] of inputs) values[k] = input.value;
@@ -352,10 +343,24 @@ export async function SettingsPage(): Promise<HTMLElement> {
       } else {
         toast(`Saved ${result.changed.length} change${result.changed.length === 1 ? "" : "s"}.`, "success");
       }
-      lastAffected = result.affects;
-      restartBtn.disabled = lastAffected.length === 0;
-      if (lastAffected.length > 0) {
-        restartBtn.textContent = `Restart ${lastAffected.length} service${lastAffected.length === 1 ? "" : "s"}`;
+      // Saving recreates any affected container server-side so the running
+      // service actually picks up the new value — no separate restart step.
+      if (result.recreated.length > 0) {
+        toast(`Applied live to ${result.recreated.join(", ")}.`, "success");
+      }
+      for (const [container, msg] of Object.entries(result.recreateErrors)) {
+        toast(`Couldn't recreate ${container}: ${msg}`, "error", 7000);
+      }
+      // Host-side keys (agent budget/parallelism/timeout, async-compaction
+      // toggle) are read by the krull-claude wrapper at launch — nothing to
+      // recreate; they take effect on the next session.
+      if (
+        result.changed.length > 0 &&
+        result.recreated.length === 0 &&
+        Object.keys(result.recreateErrors).length === 0 &&
+        !result.retuneJobId
+      ) {
+        toast("Session/agent settings take effect on the next krull-claude run.", "info");
       }
       // If a model re-tune was kicked off (because temperature/top_p/etc
       // changed), stream its progress so the user knows their parameter
@@ -372,6 +377,10 @@ export async function SettingsPage(): Promise<HTMLElement> {
           }
         });
       }
+      // The context-window recommendation depends on OLLAMA_NUM_PARALLEL and
+      // OLLAMA_KV_CACHE_TYPE, so re-fetch it after any save that might have
+      // changed them.
+      void refreshSuggestions();
     } catch (err) {
       toast(`Save failed: ${(err as Error).message}`, "error", 6000);
     } finally {
@@ -380,27 +389,7 @@ export async function SettingsPage(): Promise<HTMLElement> {
     }
   });
 
-  restartBtn.addEventListener("click", async () => {
-    if (lastAffected.length === 0) return;
-    restartBtn.disabled = true;
-    restartBtn.textContent = "Restarting…";
-    let okCount = 0;
-    for (const container of lastAffected) {
-      try {
-        await restartContainer(container);
-        okCount++;
-      } catch (err) {
-        toast(`Failed to restart ${container}: ${(err as Error).message}`, "error", 6000);
-      }
-    }
-    if (okCount > 0) {
-      toast(`Restarted ${okCount} service${okCount === 1 ? "" : "s"}.`, "success");
-    }
-    restartBtn.textContent = "Restart affected services";
-    lastAffected = [];
-  });
-
-  actions.append(saveBtn, restartBtn);
+  actions.append(saveBtn);
   footer.append(path, actions);
   form.append(footer);
   section.append(form);

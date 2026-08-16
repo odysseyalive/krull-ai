@@ -44,7 +44,14 @@ export async function fetchEnv(): Promise<EnvPayload> {
 
 export async function saveEnv(
   values: Record<string, string>,
-): Promise<{ ok: true; changed: string[]; affects: string[]; retuneJobId?: string }> {
+): Promise<{
+  ok: true;
+  changed: string[];
+  affects: string[];
+  recreated: string[];
+  recreateErrors: Record<string, string>;
+  retuneJobId?: string;
+}> {
   const res = await fetch("/api/env", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -58,6 +65,8 @@ export async function saveEnv(
     ok: true;
     changed: string[];
     affects: string[];
+    recreated: string[];
+    recreateErrors: Record<string, string>;
     retuneJobId?: string;
   };
 }

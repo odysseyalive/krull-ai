@@ -22,13 +22,21 @@ router.get("/models", async (_req, res) => {
   ]);
   const installedSet = new Set(installed);
   const active = getValue(env, "OLLAMA_MODEL") ?? "";
+  // Parallelism + KV-cache type shape the per-request VRAM budget, so the
+  // context-window suggestion must account for both.
+  const numParallel = parseInt(getValue(env, "OLLAMA_NUM_PARALLEL") ?? "1", 10);
+  const kvCacheType = getValue(env, "OLLAMA_KV_CACHE_TYPE") ?? "f16";
+  const suggestOpts = {
+    numParallel: Number.isFinite(numParallel) ? numParallel : 1,
+    kvCacheType,
+  };
   res.json({
     active,
     recommended: RECOMMENDED_MODELS.map((m) => ({
       ...m,
       installed: installedSet.has(m.key),
       active: m.key === active,
-      contextSuggestion: computeContextSuggestion(m, hardware.gpu),
+      contextSuggestion: computeContextSuggestion(m, hardware.gpu, suggestOpts),
     })),
     other: installed.filter(
       (name) => !RECOMMENDED_MODELS.some((m) => m.key === name),

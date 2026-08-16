@@ -15,6 +15,15 @@ services:
       # the proxy requests, so every session — browser or agent — gets the full
       # window rather than being clipped.
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_NUM_CTX:-131072}
+      # Flash attention + quantized KV cache shrink KV-cache VRAM so a larger
+      # context window fits on tight-VRAM cards. KV quantization requires flash
+      # attention. Both are read by the Ollama daemon at startup.
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
+      # Concurrent request slots per model. VRAM scales as NUM_PARALLEL ×
+      # context window, so this is the real control for running agents in
+      # parallel. Default 1 (serialize) matches Ollama's own default.
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -90,6 +99,7 @@ services:
       - SEARCH_RESULTS=5
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-131072}
       - CONTEXT_COMPACT_LIMIT=${CONTEXT_COMPACT_LIMIT:-98304}
+      - CONTEXT_SUMMARY_MODEL=${CONTEXT_SUMMARY_MODEL:-}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
       - KRULL_TOOL_CALL_HARD_CAP=${KRULL_TOOL_CALL_HARD_CAP:-20}
       - KRULL_HOST_HOME=${HOME}

@@ -8,6 +8,7 @@ import {
 } from "../lib/envSchema.js";
 import { createJob } from "../lib/jobs.js";
 import { startModelRetune } from "../lib/modelInstaller.js";
+import { isRecreatable, recreateContainerWithEnv } from "../lib/docker.js";
 
 const router = Router();
 
@@ -52,6 +53,34 @@ router.put("/env", async (req, res) => {
   }
   await writeEnvFile(ENV_PATH, parsed);
 
+  const fresh = await readEnvFile(ENV_PATH);
+
+  // Apply container-affecting changes by recreating each affected container
+  // with the new value(s) injected. Compose bakes ${VAR} values at
+  // create-time, so a recreate — not a restart — is what makes the running
+  // config match what the page just saved. Done before the model re-tune so
+  // a freshly-recreated ollama is up before /api/create runs against it.
+  const affected = affectedContainersFor(changed);
+  const recreated: string[] = [];
+  const recreateErrors: Record<string, string> = {};
+  for (const container of affected) {
+    if (!isRecreatable(container)) continue;
+    const overrides: Record<string, string> = {};
+    for (const key of changed) {
+      const field = ENV_SCHEMA.find((f) => f.key === key);
+      if (!field || !field.affects.includes(container)) continue;
+      const envName = field.containerEnvNames?.[container] ?? key;
+      overrides[envName] = getValue(fresh, key) ?? "";
+    }
+    if (Object.keys(overrides).length === 0) continue;
+    try {
+      await recreateContainerWithEnv(container, overrides);
+      recreated.push(container);
+    } catch (err) {
+      recreateErrors[container] = (err as Error).message;
+    }
+  }
+
   // Sampling parameters (temperature, top_p, top_k, presence_penalty)
   // are baked into each Ollama model at create-time, NOT read at
   // request-time, so just writing them to .env has no runtime effect.
@@ -61,12 +90,12 @@ router.put("/env", async (req, res) => {
   // show progress.
   let retuneJobId: string | undefined;
   if (changedKeysRequireRetune(changed)) {
-    const fresh = await readEnvFile(ENV_PATH);
     const params = {
       temperature: numberOrUndefined(getValue(fresh, "OLLAMA_TEMPERATURE")),
       top_p: numberOrUndefined(getValue(fresh, "OLLAMA_TOP_P")),
       top_k: numberOrUndefined(getValue(fresh, "OLLAMA_TOP_K")),
       presence_penalty: numberOrUndefined(getValue(fresh, "OLLAMA_PRESENCE_PENALTY")),
+      num_predict: numberOrUndefined(getValue(fresh, "OLLAMA_NUM_PREDICT")),
     };
     const job = createJob("model-retune", "all-installed");
     retuneJobId = job.id;
@@ -78,7 +107,9 @@ router.put("/env", async (req, res) => {
   res.json({
     ok: true,
     changed,
-    affects: affectedContainersFor(changed),
+    affects: affected,
+    recreated,
+    recreateErrors,
     retuneJobId,
   });
 });

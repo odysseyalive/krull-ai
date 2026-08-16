@@ -68,17 +68,6 @@ export const RECOMMENDED_MODELS: RecommendedModel[] = [
     kvBytesPerToken: 120 * 1024,
     nativeMaxCtx: 131072,
   },
-  {
-    key: "gemma4:12b",
-    label: "Gemma 4 · 12B",
-    vram: "~8 GB",
-    description:
-      "Google Gemma 4 dense 12B — matches the older Gemma 4 26B on quality while staying laptop-runnable. A thinking model with native tool calling and strong output-format reliability, the best agentic pick at this size. Its interleaved sliding-window (1024-token) + shared-KV attention keeps context cheap: verified holding the full 128k window fully GPU-resident on a 16 GB card.",
-    bestFor: "16 GB GPUs doing agentic / tool-calling work that needs a large context window kept resident.",
-    weightBytes: 8 * 1024 * 1024 * 1024,
-    kvBytesPerToken: 90 * 1024,
-    nativeMaxCtx: 131072,
-  },
 ];
 
 /**
@@ -93,10 +82,26 @@ export const RECOMMENDED_MODELS: RecommendedModel[] = [
  * so minor estimation error doesn't push the user over the edge into
  * an OOM during a long conversation.
  */
+export interface ContextSuggestionOpts {
+  /** OLLAMA_NUM_PARALLEL — concurrent request slots. Each slot needs its own
+   * KV cache, so the per-request window budget is divided by this. */
+  numParallel?: number;
+  /** OLLAMA_KV_CACHE_TYPE — q8_0 halves KV memory vs f16, q4_0 quarters it. */
+  kvCacheType?: string;
+}
+
 export function computeContextSuggestion(
   model: RecommendedModel,
   gpu: { vendor: "nvidia" | "none"; totalBytes?: number; name?: string },
+  opts: ContextSuggestionOpts = {},
 ): ContextSuggestion {
+  const numParallel = Math.max(1, Math.floor(opts.numParallel ?? 1));
+  // Ollama allocates a full KV cache per parallel slot, so effective per-token
+  // cost is the same but the budget is shared across `numParallel` contexts.
+  const kvFactor =
+    opts.kvCacheType === "q8_0" ? 0.5 : opts.kvCacheType === "q4_0" ? 0.25 : 1;
+  const effKvBytesPerToken = model.kvBytesPerToken * kvFactor;
+
   const gbFmt = (bytes: number): string =>
     `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   const tokenFmt = (n: number): string => `${Math.round(n / 1024)}k tokens`;
@@ -109,13 +114,14 @@ export function computeContextSuggestion(
   // Fallback: no detected GPU — suggest a conservative 8k window so
   // the user at least gets a sensible starting point.
   if (gpu.vendor === "none" || !gpu.totalBytes) {
-    const numCtx = 8192;
+    const numCtx = roundToTier(Math.floor(8192 / numParallel));
     return {
       numCtx,
       compactLimit: Math.round(numCtx * 0.75),
       rationale:
-        `No GPU detected, so this is a conservative CPU-friendly default. ` +
-        `If you're on Apple Silicon, set OLLAMA_NUM_CTX manually — unified ` +
+        `No GPU detected, so this is a conservative CPU-friendly default` +
+        (numParallel > 1 ? ` (divided across ${numParallel} parallel slots)` : ``) +
+        `. If you're on Apple Silicon, set OLLAMA_NUM_CTX manually — unified ` +
         `memory can usually go much higher than 8k, but krull-home can't ` +
         `introspect Metal from inside the container. Auto-compact at 75%.`,
     };
@@ -128,19 +134,31 @@ export function computeContextSuggestion(
     0,
     gpu.totalBytes - model.weightBytes - overheadBytes,
   );
-  const rawMaxTokens = kvBudget / model.kvBytesPerToken;
+  // Divide the KV budget across the parallel slots — every concurrent agent
+  // request needs its own context-sized cache resident at once.
+  const perSlotBudget = kvBudget / numParallel;
+  const rawMaxTokens = perSlotBudget / effKvBytesPerToken;
   // 85% safety margin on the computed KV token count.
   const safeMaxTokens = Math.floor(rawMaxTokens * 0.85);
   const numCtx = Math.min(model.nativeMaxCtx, roundToTier(safeMaxTokens));
   const compactLimit = Math.round(numCtx * 0.75);
 
+  const kvNote =
+    kvFactor < 1
+      ? `${opts.kvCacheType} KV cache (~${Math.round(effKvBytesPerToken / 1024)} KB/token)`
+      : `f16 KV cache (~${Math.round(effKvBytesPerToken / 1024)} KB/token)`;
+  const parallelNote =
+    numParallel > 1
+      ? ` Split across ${numParallel} parallel slots (OLLAMA_NUM_PARALLEL), each slot gets ${gbFmt(perSlotBudget)}.`
+      : ``;
+
   const rationale =
     `Your ${gpu.name ?? "GPU"} reports ${gbFmt(gpu.totalBytes)} total VRAM. ` +
     `After the ${model.label} weights (~${gbFmt(model.weightBytes)}) and ` +
-    `~1 GB runtime overhead, ${gbFmt(kvBudget)} is left for the KV cache. ` +
-    `At ~${Math.round(model.kvBytesPerToken / 1024)} KB per token that fits ` +
-    `roughly ${tokenFmt(rawMaxTokens)}; rounded down to a friendly size with ` +
-    `an 85% safety margin gives ${tokenFmt(numCtx)}` +
+    `~1 GB runtime overhead, ${gbFmt(kvBudget)} is left for the KV cache.` +
+    parallelNote +
+    ` With ${kvNote} that fits roughly ${tokenFmt(rawMaxTokens)} per request; ` +
+    `rounded down with an 85% safety margin gives ${tokenFmt(numCtx)}` +
     (numCtx >= model.nativeMaxCtx
       ? ` — capped at Gemma 4's native 128k window.`
       : `.`) +
@@ -181,6 +199,7 @@ export interface ModelTuningParams {
   top_p?: number;
   top_k?: number;
   presence_penalty?: number;
+  num_predict?: number;
 }
 
 /**
