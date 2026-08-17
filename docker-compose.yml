@@ -40,13 +40,23 @@ services:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-changeme-generate-a-real-key}
       - WEBUI_AUTH=False
       - ENABLE_API_KEYS=True
-      # Web search via SearXNG
-      - ENABLE_RAG_WEB_SEARCH=True
-      - RAG_WEB_SEARCH_ENGINE=searxng
-      - RAG_WEB_SEARCH_RESULT_COUNT=5
-      - SEARXNG_QUERY_URL=http://krull-searxng:8080/search?q=<query>
-      # Playwright for full page fetching
-      - RAG_WEB_LOADER_ENGINE=playwright
+      # Web access for the chat model is provided by the intent-gated inlet
+      # filter functions/web_search.py, which calls the krull-web-broker
+      # (external-engine {query,count} -> [{link,title,snippet}] contract) at
+      # http://krull-web-broker:8130/search. The broker routes intent to SearXNG
+      # + host playwright-mcp and returns honest markers on failure.
+      #
+      # The old ENABLE_RAG_WEB_SEARCH / RAG_WEB_SEARCH_ENGINE / SEARXNG_QUERY_URL
+      # / RAG_WEB_LOADER_ENGINE vars were removed: the pinned open-webui:main
+      # image no longer reads those names (renamed to WEB_SEARCH_ENGINE /
+      # WEB_LOADER_ENGINE / EXTERNAL_WEB_SEARCH_URL), so they were inert. To flip
+      # to OWUI's NATIVE external engine later, set here instead:
+      #   ENABLE_WEB_SEARCH=True
+      #   WEB_SEARCH_ENGINE=external
+      #   EXTERNAL_WEB_SEARCH_URL=http://krull-web-broker:8130/search
+      #   WEB_LOADER_ENGINE=external
+      #   EXTERNAL_WEB_LOADER_URL=http://krull-web-broker:8130/load
+      # and retire the inlet filter (see DEC on the integration decision).
 
   searxng:
     image: searxng/searxng:latest
@@ -60,6 +70,59 @@ services:
       - CHOWN
       - SETGID
       - SETUID
+
+  # playwright-mcp as an in-network container (built from the sibling
+  # ../playwright-mcp repo, cloned by scripts/setup.sh). Runs the LOCAL trust
+  # tier over its no-auth loopback Streamable-HTTP transport, reachable by the
+  # broker as krull-playwright:8765 — CONTAINER-TO-CONTAINER, so no host INPUT
+  # boundary is crossed and NO ufw rule is needed. Its port is never published to
+  # a host interface. Headless: covers web search + image/video + full-page reads.
+  #
+  # HEADED CAPTCHA handoff is the one thing a headless container cannot do (no
+  # display to pop a window on). It degrades to an honest "unavailable" marker.
+  # To enable inline solving on a Wayland host, mount the compositor socket and
+  # flip BROKER_SOLVE_ENABLED=true on the broker below:
+  #     environment:
+  #       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
+  #       - XDG_RUNTIME_DIR=/run/user/1000
+  #     volumes:
+  #       - ${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:/run/user/1000/${WAYLAND_DISPLAY}
+  #     user: "1000:1000"
+  # (Environment-dependent; verify a window opens. The alternative is a host-run
+  #  instance via scripts/web-broker-host.sh + the ufw allowance it prints.)
+  playwright:
+    build:
+      context: ../playwright-mcp
+    container_name: krull-playwright
+    restart: "no"
+    environment:
+      - PLAYWRIGHT_MCP_PUBLIC_URL=http://krull-playwright:8765
+      - PLAYWRIGHT_MCP_ALLOW_NOAUTH=1
+      - PLAYWRIGHT_MCP_PORT=8765
+      - PLAYWRIGHT_MCP_BIND=0.0.0.0
+
+  # Deterministic web-access broker for the Open WebUI → Ollama chat path.
+  # Speaks the OWUI `external` search/loader HTTP contracts (functions/web_search.py
+  # calls /search); routes intent to SearXNG (text/image/video) and to the
+  # krull-playwright container for full-page reads (+ headed CAPTCHA handoff when
+  # enabled). Distinct from the Claude Code / LiteLLM / sse-proxy path.
+  web-broker:
+    build: ./broker
+    container_name: krull-web-broker
+    depends_on:
+      - searxng
+      - playwright
+    restart: "no"
+    environment:
+      - SEARXNG_URL=http://krull-searxng:8080
+      - PLAYWRIGHT_MCP_URL=${PLAYWRIGHT_MCP_URL:-http://krull-playwright:8765/mcp}
+      - BROKER_RESULT_COUNT=${BROKER_RESULT_COUNT:-5}
+      # Headed CAPTCHA solving is off by default: the headless krull-playwright
+      # container has no display. Enable together with the Wayland mount above.
+      - BROKER_SOLVE_ENABLED=${BROKER_SOLVE_ENABLED:-false}
+      - BROKER_SOLVE_TIMEOUT_MS=${BROKER_SOLVE_TIMEOUT_MS:-90000}
+      - BROKER_EXHAUSTIVE_FETCH=${BROKER_EXHAUSTIVE_FETCH:-3}
+      - BROKER_PORT=8130
 
   sse-proxy:
     build: ./proxy

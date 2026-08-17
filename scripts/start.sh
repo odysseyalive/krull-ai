@@ -327,9 +327,9 @@ if $IS_MACOS; then
     else
         echo "[-] ollama (native): not running — start with 'ollama serve'"
     fi
-    SERVICES="krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix"
+    SERVICES="krull-webui krull-searxng krull-playwright krull-web-broker krull-litellm krull-tileserver krull-photon krull-kiwix"
 else
-    SERVICES="krull-ollama krull-webui krull-searxng krull-litellm krull-tileserver krull-photon krull-kiwix"
+    SERVICES="krull-ollama krull-webui krull-searxng krull-playwright krull-web-broker krull-litellm krull-tileserver krull-photon krull-kiwix"
 fi
 for svc in $SERVICES; do
     STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")

@@ -397,6 +397,12 @@ else
     fi
 fi
 
+# --- Web-access broker backend ---
+# The krull-web-broker reaches playwright-mcp as the in-network krull-playwright
+# container (built from ../playwright-mcp, brought up by `docker compose`), so no
+# host instance and no ufw rule are needed. For OPTIONAL host-run headed CAPTCHA
+# solving instead, see scripts/web-broker-host.sh.
+
 # --- Sentinel: mark setup complete so start.sh won't re-run it on every boot ---
 mkdir -p "$PROJECT_DIR/data"
 date -Iseconds > "$PROJECT_DIR/data/.setup-complete"

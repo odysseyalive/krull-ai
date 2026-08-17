@@ -36,6 +36,9 @@ data/.update-status
 data/aero-work/
 litellm/config.yaml
 
+# krull-web-broker runtime state (host playwright-mcp pidfile + log)
+data/web-broker/
+
 # Dev scratch at repo root: ad-hoc screenshots and playwright snapshot
 # dumps. Anchored to the repo root so app assets like
 # kiwix-front/favicon/*.png and map-viewer/public/sprites/*.png are
