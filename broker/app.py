@@ -22,6 +22,7 @@ Every failure state is distinct and honest (markers.py); the model is never left
 to infer "I can't browse" from silence.
 """
 
+import hmac
 import logging
 import os
 
@@ -29,6 +30,7 @@ from aiohttp import web
 
 import markers
 import router
+import urlguard
 from mcp_client import McpUnavailable, PlaywrightMcp
 from searxng import SearxngError, search as searxng_search
 
@@ -50,6 +52,13 @@ def _cfg():
         "exhaustive_multiplier": int(os.environ.get("BROKER_EXHAUSTIVE_MULTIPLIER", "2")),
         "page_text_cap": int(os.environ.get("BROKER_PAGE_TEXT_CAP", "4000")),
         "api_key": os.environ.get("BROKER_API_KEY", ""),
+        # Per-request cap on /load URLs. Each read is a full headless page
+        # render (and possibly a 90s headed solve), done sequentially, so an
+        # unbounded list holds the request open indefinitely. 10 covers a chat
+        # turn's needs (the search side requests 5 by default); the URLs beyond
+        # it are named in one honest REASON_OVER_LIMIT marker, never dropped
+        # silently.
+        "max_load_urls": int(os.environ.get("BROKER_MAX_LOAD_URLS", "10")),
     }
 
 
@@ -59,7 +68,13 @@ def _authorized(request: web.Request, cfg: dict) -> bool:
     if not cfg["api_key"]:
         return True
     auth = request.headers.get("Authorization", "")
-    return auth == f"Bearer {cfg['api_key']}"
+    # Constant-time compare so the key cannot be recovered byte-by-byte from
+    # response timing. compare_digest needs bytes for non-ASCII input; a
+    # header aiohttp could not decode carries surrogates, hence surrogateescape.
+    return hmac.compare_digest(
+        auth.encode("utf-8", "surrogateescape"),
+        f"Bearer {cfg['api_key']}".encode("utf-8", "surrogateescape"),
+    )
 
 
 def _mcp(cfg: dict) -> PlaywrightMcp:
@@ -83,6 +98,15 @@ async def _deepen(cfg: dict, results: list) -> list:
     for r in results[: cfg["exhaustive_fetch"]]:
         url = r.get("link")
         if not url:
+            continue
+        refused = await urlguard.refusal(url)
+        if refused:
+            # A search engine returned a link into a private/internal address
+            # (or an unreadable URL). Never fetch it; keep the snippet, say why.
+            r["snippet"] = (
+                f'{r.get("snippet", "")} [full page not read: it {refused}; snippet only]'
+            ).strip()
+            log.warning("deepen: refused %s (%s)", url, refused)
             continue
         try:
             page = await mcp.fetch_page(url, allow_solve=False)
@@ -152,15 +176,29 @@ async def handle_load(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
     urls = body.get("urls") or []
-    if isinstance(urls, str):
+    if not isinstance(urls, list):
+        # A bare string is one URL; anything else becomes one entry that the
+        # guard below answers with an honest bad-URL marker.
         urls = [urls]
-    log.info("load: %d url(s)", len(urls))
+    cap = cfg["max_load_urls"]
+    log.info("load: %d url(s) (cap %d)", len(urls), cap)
 
     mcp = _mcp(cfg)
     docs = []
     host_down = False
+    overflow = urls[cap:]
+    urls = urls[:cap]
     for url in urls:
+        refused = await urlguard.refusal(url)
+        if refused:
+            # SSRF denial (CWE-918): private/loopback/link-local/internal or
+            # malformed URLs never reach playwright-mcp.
+            log.warning("load: refused %r (%s)", _shown(url), refused)
+            docs.append(markers.unavailable_document(_shown(url), refused))
+            continue
         if host_down:
             # The host instance is unreachable; don't reopen a fresh MCP session
             # per remaining URL — one honest marker each, no wasted attempts.
@@ -189,7 +227,18 @@ async def handle_load(request: web.Request) -> web.Response:
             reason = _load_reason(status, page.get("solve_attempted", False))
             log.info("load: %s not readable (status=%s) -> honest doc marker", url, status)
             docs.append(markers.unavailable_document(url, reason))
+    if overflow:
+        # One honest marker for the whole overflow, not one per URL: a 1 MiB
+        # body of junk entries must not turn into a 100 MB marker response.
+        # Appended last so docs[i] still answers urls[i] for every read URL.
+        docs.append(markers.skipped_documents([_shown(u) for u in overflow], cap))
     return web.json_response(docs)
+
+
+def _shown(url) -> str:
+    """A request-supplied entry as it may appear in a marker: always a str,
+    and bounded so a junk entry cannot bloat the injected context."""
+    return (url if isinstance(url, str) else repr(url))[:300]
 
 
 def _load_reason(status: str, solve_attempted: bool = False) -> str:

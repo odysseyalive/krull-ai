@@ -68,6 +68,7 @@ Every administrative action is wrapped by `./krull` at the project root.
 | `./krull download-wikipedia [mini\|nopic\|medicine\|full]` | Downloads Wikipedia ZIM files for Kiwix |
 | `./krull download-knowledge <package\|bundle> [...]` | Downloads dev docs, Stack Exchange, knowledge archives, and more |
 | `./krull download-maps <region>` | Downloads all map types for a region (base + terrain + nautical + aero) |
+| `./krull bakeoff [--dry-run] [model ...]` | Head-to-head of Ollama models on this machine: max context, VRAM, tokens/sec, and krull-claude tool-use tests through the SSE proxy. Switches models through the Settings-page API, restores `OLLAMA_MODEL` / `OLLAMA_NUM_CTX` / `CONTEXT_COMPACT_LIMIT` and `litellm/config.yaml` on exit, and writes `data/bakeoff/<timestamp>/results.md`. Pull first while online (`--pull-only`), then run offline with `--skip-pull`. |
 
 Individual scripts in `scripts/` still work directly if needed. The Library of Alexandria page on the homepage (`http://localhost:8000/library`) is a UI wrapper around `download-knowledge`, `download-wikipedia`, and `download-maps`.
 
@@ -342,6 +343,7 @@ The Update button in the Krull Home nav is backed by a small idle sidecar contai
 4. The updater (which polls every 3s) sees the sentinel, deletes it, and runs:
    - `git fetch https://github.com/odysseyalive/krull-ai.git main` (HTTPS, no SSH key needed)
    - `git merge --ff-only FETCH_HEAD` — refuses if the local branch has diverged or has uncommitted changes
+   - `bash scripts/merge-env.sh` — adds new `.env.sample` keys to `.env` without overwriting your values (same step as `./scripts/update.sh`). With nothing to add it leaves `.env` untouched; when it does append, the rewritten file keeps the original owner, group and mode, so the root-run updater never hands `.env` to root
    - `docker compose up -d --build <every-service-except-itself>` — rebuilds everything in place
    - `bash scripts/setup.sh` — re-provisions Open WebUI filters in case any changed
    - Writes `data/.update-status` with the result
@@ -360,7 +362,7 @@ This skips the sentinel and just runs the same operations directly on the host. 
 **Inspect the most recent update:**
 
 ```bash
-cat data/.update-status   # JSON: {phase, timestamp, message}
+cat data/.update-status   # JSON: {phase, timestamp, message}; phase is running, complete or failed
 cat data/.update-log      # full stdout/stderr from the last attempt
 ```
 
@@ -413,10 +415,11 @@ They're Python functions that process every request before it reaches the model.
 | **Current Date & Time** | Injects today's date and current time into every request. Local models have no sense of time otherwise. |
 | **Context Manager** | Monitors token usage and auto-compacts older messages when the conversation approaches the context limit. Keeps things alive instead of crashing. |
 | **Truth Guard** | Front-loads anti-fabrication, hedge-when-uncertain, and push-back-when-the-user-is-wrong rules. Also detects terseness directives in the user message ("ONLY the answer", "no explanation", "in one word") and appends a freshness reminder so the model can't be talked out of hedging by being asked to be brief. |
-| **Auto Web Search** | Queries SearXNG before every response and injects the top results with source URLs. The model cites what it finds. (Tools-less requests only — when tools are present the model is expected to call `WebSearch` / `WebFetch` itself.) |
-| **Kiwix Knowledge Lookup** | Searches the offline knowledge base and injects relevant article snippets. Scopes per-book against the strict-eng catalog (`books.name=` per entry) so kiwix-serve's "two or more books in different languages" check doesn't trip. Tools-less requests only. |
+| **Auto Web Search** | Intent-gated: fires only when the latest user message calls for live or external information (recency words like "latest" / "today" / "this morning", explicit search words, image or video words, factual phrasing like "who is" / "how much", or a trailing `?`). Otherwise it does nothing. When it fires it POSTs `{query, count}` to the `krull-web-broker` `/search` endpoint, which routes the intent to the matching SearXNG category (deepening exhaustive requests with full-page reads through `krull-playwright`), and injects the returned results with their URLs and a soft "Cite any you actually use". If the search fails or the broker is unreachable, it injects an honest "Web search unavailable" note instead of nothing. (The Claude Code path does not use this filter: the SSE proxy's own `inject_web_search` queries SearXNG directly, on tools-less requests only.) |
+| **Kiwix Knowledge Lookup** | Intent-gated: fires only when the message reads like a knowledge question ("explain", "how to", "tell me about", a trailing `?`, and similar). Searches the offline knowledge base and injects relevant article snippets. Scopes per-book against the strict-eng catalog (`books.name=` per entry) so kiwix-serve's "two or more books in different languages" check doesn't trip. (The SSE proxy's twin, `inject_kiwix`, runs on tools-less requests only.) |
 | **Offline Language Docs** (`inject_lang_docs`) | Tools-present companion to Kiwix Lookup, aimed at krull-claude / Claude Code traffic. Detects the programming language in play (file extensions, marker files like `Cargo.toml` / `pyproject.toml` / `go.mod`, free-text language tokens) and injects a system note teaching the model the exact `curl http://localhost:8090/search?books.name=devdocs_en_<lang>_<date>&pattern=...` shape, plus the `/content/<book>/<path>` shape for fetching specific pages. Uses Bash + curl rather than `WebFetch` because Claude Code's `WebFetch` blocks localhost / private-IP URLs. The lang→ZIM map is resolved against the live catalog at request time so date suffixes don't go stale. Toggle via `ENABLE_LANG_DOCS` (default `true`). |
 | **Offline Map Search** | Detects location queries and searches Photon for places, addresses, and coordinates. Results include links to the local tile server. |
+| **Voice Guard** | Injects a short natural-voice directive on every request, then post-processes the reply to strip the worst AI tells (em-dashes, stock openers and closers). |
 
 All filter settings are adjustable in Open WebUI under **Admin Panel > Functions > [filter name] > Valves**. SSE-proxy filters (Truth Guard, Offline Language Docs) are toggled via the proxy's environment block in `docker-compose.yml` (`ENABLE_TRUTH_GUARD`, `ENABLE_LANG_DOCS`, `ENABLE_KIWIX`, `ENABLE_WEB_SEARCH`, `ENABLE_MAP_SEARCH`).
 
@@ -424,7 +427,7 @@ Settings you might want to tune:
 
 | Setting | Filter | Default | What to change |
 |---|---|---|---|
-| `max_context_tokens` | Context Manager | 16384 | Match your model's actual context window |
+| `max_context_tokens` | Context Manager | 131072 | Match your model's actual context window |
 | `compact_threshold` | Context Manager | 0.75 | Lower = more aggressive compaction |
 | `num_results` | Auto Web Search | 5 | Fewer results = less context used |
 | `enabled` | Any filter | true | Disable what you don't need |
@@ -482,7 +485,7 @@ Without a GPU, Ollama falls back to CPU. It works. It's just slow.
 
 ### Session metadata file (host-side)
 
-When a host-launched session starts (via `krull-claude`), a small per-session JSON metadata file is written to the host home directory and removed on session exit:
+When a host-launched session starts via `scripts/krull-claude-session-meta.sh` (which then hands off to `krull-claude`; plain `krull-claude` writes only `~/.krull-session`), a small per-session JSON metadata file is written to the host home directory and removed on session exit:
 
 - Path pattern: ~/.krull-session-meta-<session_id>.json (also supports ~/.krull-session-meta.json)
 - Example contents:

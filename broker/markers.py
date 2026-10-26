@@ -24,6 +24,14 @@ REASON_CAPTCHA_UNSOLVED = "hit a CAPTCHA / bot wall that was not solved in time"
 REASON_BLOCKED = "was blocked by the target site"
 REASON_LOGIN_WALL = "requires a login the stack does not have"
 REASON_PAYWALL = "is behind a paywall"
+# Refused before any fetch (urlguard.py / handle_load). Document-only states.
+REASON_PRIVATE_HOST = (
+    "points at a private, loopback or internal network address the broker will not fetch"
+)
+REASON_BAD_URL = "is not a valid public http(s) URL"
+REASON_OVER_LIMIT = (
+    "was skipped because the request asked for more pages than the broker reads at once"
+)
 
 
 def unavailable_result(query: str, reason: str) -> dict:
@@ -56,4 +64,28 @@ def unavailable_document(url: str, reason: str) -> dict:
             "page's contents."
         ),
         "metadata": {"source": url, "krull_fetch_status": "unavailable", "reason": reason},
+    }
+
+
+def skipped_documents(urls: list, limit: int) -> dict:
+    """One document for the URLs a /load request asked for beyond the
+    broker's per-request cap. Bounded: at most `limit` of them are listed by
+    name, the rest are counted, so an oversized request cannot inflate the
+    injected context."""
+    shown = ", ".join(urls[:limit])
+    more = len(urls) - limit
+    if more > 0:
+        shown += f" and {more} more"
+    return {
+        "page_content": (
+            f"[{len(urls)} requested page(s) were not retrieved: {shown}. Each "
+            f"{REASON_OVER_LIMIT} ({limit}).] No content was loaded for them. "
+            "Report this honestly; do not fabricate their contents."
+        ),
+        "metadata": {
+            "source": "",
+            "krull_fetch_status": "unavailable",
+            "reason": REASON_OVER_LIMIT,
+            "skipped": len(urls),
+        },
     }

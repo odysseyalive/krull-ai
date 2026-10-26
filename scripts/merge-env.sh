@@ -61,7 +61,9 @@ if cur:
 # For each block, detect key and append if missing
 append_blocks=[]
 for blk in blocks:
-    m=key_re.search(blk)
+    # The key line is the block's last line; '^' without re.M would only
+    # see the first line, missing every key that has a comment above it.
+    m=key_re.match(blk.splitlines()[-1])
     if m:
         k=m.group(1)
         if k not in present:
@@ -70,16 +72,31 @@ for blk in blocks:
         # non-key comments at end — ignore
         pass
 
-# Write merged file: original target followed by appended blocks
-with open(out,'w') as f:
+# Nothing to add: leave .env untouched (same inode, owner, mode, mtime).
+# The krull-updater container runs this as root, so rewriting here would
+# hand the user's .env to root on every Update-button run.
+if not append_blocks:
+    print('No missing keys; %s unchanged' % tgt)
+    sys.exit(0)
+
+# Write merged file: original target followed by appended blocks.
+# Created 0600 so a private .env is never briefly world-readable, then
+# given the original owner/group/mode before it replaces the target.
+import os,stat
+st=os.stat(tgt)
+with os.fdopen(os.open(out,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600),'w') as f:
     f.writelines(t_lines)
-    if append_blocks:
-        f.write('\n# --- Appended from .env.sample ---\n')
-        for b in append_blocks:
-            f.write(b)
+    f.write('\n# --- Appended from .env.sample ---\n')
+    for b in append_blocks:
+        f.write(b)
+try:
+    os.chown(out,st.st_uid,st.st_gid)
+except PermissionError:
+    # Non-root caller on a file it does not own: keep the caller's ids.
+    pass
+os.chmod(out,stat.S_IMODE(st.st_mode))
 
 # Replace target
-import os
 os.replace(out,tgt)
 print('Merged %d missing keys into %s' % (len(append_blocks), tgt))
 PY

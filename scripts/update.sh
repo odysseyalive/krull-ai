@@ -23,20 +23,33 @@ done
 # Helper to write status JSON. The message is handed to python via the
 # environment (not string-interpolated into the source) so quotes,
 # backslashes, and $ in the text can never break the JSON or the shell.
+# Phases are the set krull-home reads (krull-home/src/lib/api.ts
+# UpdatePhase) and krull-updater/watch.sh writes: running, complete, failed.
+STATUS_TERMINAL=0
 write_status() {
   local phase="$1"; shift
   local msg="$*"
-  local ts
-  ts=$(date +%s)
-  PHASE="$phase" TS="$ts" MSG="$msg" python3 - <<'PY' > "$STATUSFILE"
+  case "$phase" in complete|failed) STATUS_TERMINAL=1 ;; esac
+  PHASE="$phase" MSG="$msg" python3 - <<'PY' > "$STATUSFILE"
 import json, os
+from datetime import datetime
 print(json.dumps({
     "phase": os.environ.get("PHASE", ""),
-    "timestamp": int(os.environ.get("TS", "0")),
+    "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
     "message": os.environ.get("MSG", ""),
 }))
 PY
 }
+
+# A step failing under set -e must not leave the status at "running":
+# krull-home refuses new update requests while it reads "running".
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "$STATUS_TERMINAL" -eq 0 ]; then
+    write_status failed "Update exited with code $rc — inspect $LOGFILE"
+  fi
+}
+trap on_exit EXIT
 
 # Start logging
 mkdir -p "$(dirname "$LOGFILE")"
@@ -44,7 +57,7 @@ exec > >(tee "$LOGFILE") 2>&1
 
 echo "=== Krull AI updater ==="
 echo "Project: $PROJECT_DIR"
-write_status started "Updater started"
+write_status running "Updater started"
 
 cd "$PROJECT_DIR"
 
@@ -73,7 +86,7 @@ if [ -n "$dirty" ]; then
     echo "Resetting to remote..."
     git reset --hard FETCH_HEAD
   else
-    write_status aborted "Local changes detected; aborting update. Run with --force to overwrite (creates backup branch)."
+    write_status failed "Local changes detected; aborting update. Run with --force to overwrite (creates backup branch)."
     echo "Aborting. Commit/stash your changes or re-run with --force to overwrite (a backup branch will be created)."
     exit 1
   fi
@@ -87,7 +100,7 @@ else
     echo "Non-fast-forward; force-reset to remote (after backup)."
     git reset --hard FETCH_HEAD
   else
-    write_status aborted "Remote update requires manual merge; aborting."
+    write_status failed "Remote update requires manual merge; aborting."
     echo "Remote requires merge. Resolve locally or run with --force to reset."
     exit 1
   fi
@@ -170,7 +183,7 @@ wait_for "SSE proxy"  30 check_proxy   || HEALTH_OK=0
 wait_for "Ollama"     30 check_ollama  || HEALTH_OK=0
 
 if [ "$HEALTH_OK" -eq 1 ]; then
-  write_status done "Update completed successfully"
+  write_status complete "Update completed successfully"
   echo "Update finished successfully."
   exit 0
 else

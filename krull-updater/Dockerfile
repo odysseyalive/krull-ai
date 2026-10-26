@@ -7,12 +7,15 @@
 # container so it survives the rebuild and can drive it to completion.
 FROM alpine:latest
 
+# python3: watch.sh runs scripts/merge-env.sh and scripts/setup.sh, and
+# both parse with python3.
 RUN apk add --no-cache \
     bash \
     git \
     curl \
     docker-cli \
-    docker-cli-compose
+    docker-cli-compose \
+    python3
 
 # Modern git refuses to operate on a repo owned by a different UID
 # (CVE-2022-24765 / "dubious ownership"). The repo on the host is

@@ -18,18 +18,49 @@ if [ "$PRINT_MODE" -eq 1 ]; then
   EXTRA+=(--permission-mode acceptEdits)
 fi
 
-# Generate a session ID so proxy logs can be correlated with this
-# invocation. Written to a known file the proxy reads (it has $HOME
-# mounted read-only). Also exported so hooks/scripts can reference it.
-export KRULL_SESSION_ID="$(date +%Y%m%dT%H%M%S)-$$"
+# Session ID, so proxy logs can be correlated with this invocation.
+# Written to a known file the proxy reads (it has $HOME mounted read-only).
+# Also exported so hooks/scripts can reference it.
+#
+# The ID is kept only when it was handed to this very process.
+# krull-claude-session-meta.sh names its per-session metadata file after
+# the ID and then execs this script, which keeps its PID, so it marks the
+# handoff with KRULL_SESSION_OWNER_PID=$$. Keeping that ID is what lets the
+# proxy find the metadata under the ID it reads from the session file.
+# Anything else gets a fresh ID. That includes a krull-claude started
+# from inside another session's shell: it inherits that session's ID
+# and owner PID, and the owner PID is not its own. So nested and
+# concurrent runs never share an ID.
+if [ -z "${KRULL_SESSION_ID:-}" ] || [ "${KRULL_SESSION_OWNER_PID:-}" != "$$" ]; then
+  KRULL_SESSION_ID="$(date +%Y%m%dT%H%M%S)-$$"
+  unset KRULL_SESSION_META   # an inherited one names another session's file
+fi
+export KRULL_SESSION_ID
+export KRULL_SESSION_OWNER_PID=$$
 KRULL_SESSION_FILE="$HOME/.krull-session"
 echo "$KRULL_SESSION_ID" > "$KRULL_SESSION_FILE"
 echo "krull-claude session: $KRULL_SESSION_ID"
 echo "  logs: tail -f logs/proxy.jsonl | grep $KRULL_SESSION_ID"
 
-# Clean up the session file on exit
-cleanup() { rm -f "$KRULL_SESSION_FILE"; }
-trap cleanup EXIT
+# Clean up the session file when claude exits. A trap here would never
+# fire: the launch at the bottom is an `exec`, so claude replaces this
+# shell and keeps its PID ($$). Keeping the exec keeps claude's exit code,
+# its signals (Ctrl-C, SIGTERM from `timeout`) and the tty exactly as if it
+# had been run directly. Instead a detached watcher waits for that PID to
+# go away, however it ends, then removes the file only if it still holds
+# this session's ID: a krull-claude started since in another terminal has
+# overwritten it and keeps its own. The watcher ignores HUP/INT/TERM so a
+# closed terminal or a Ctrl-C to the foreground group cannot kill it before
+# claude is gone, and its stdio is /dev/null so it never holds open a pipe
+# that a caller of `-p` is reading.
+_krull_claude_pid=$$
+(
+  trap '' HUP INT TERM
+  while kill -0 "$_krull_claude_pid" 2>/dev/null; do sleep 1; done
+  if [ "$(cat "$KRULL_SESSION_FILE" 2>/dev/null)" = "$KRULL_SESSION_ID" ]; then
+    rm -f "$KRULL_SESSION_FILE"
+  fi
+) </dev/null >/dev/null 2>&1 &
 
 # Tell Claude Code the real context window size so its auto-compactor
 # fires at the right threshold. Without this, Claude Code assumes 200K

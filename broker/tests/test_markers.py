@@ -37,6 +37,9 @@ def test_distinct_reasons_render_distinctly():
         markers.REASON_BLOCKED,
         markers.REASON_LOGIN_WALL,
         markers.REASON_PAYWALL,
+        markers.REASON_PRIVATE_HOST,
+        markers.REASON_BAD_URL,
+        markers.REASON_OVER_LIMIT,
     ]
     snippets = {markers.unavailable_search("q", r)[0]["snippet"] for r in reasons}
     # Every reason produces a distinct snippet — no collapsing into one generic string.

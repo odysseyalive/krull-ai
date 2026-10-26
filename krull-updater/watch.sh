@@ -90,6 +90,18 @@ run_update() {
         local after
         after=$(git rev-parse HEAD)
         echo "[$(date -Iseconds)] HEAD: $before -> $after"
+
+        # Merge new .env.sample keys into .env without clobbering user
+        # values — the same step scripts/update.sh runs after its merge.
+        if [ -f "$REPO/scripts/merge-env.sh" ]; then
+            write_status "running" "Merging environment defaults"
+            echo "[$(date -Iseconds)] Running merge-env.sh"
+            if ! bash "$REPO/scripts/merge-env.sh"; then
+                write_status "failed" "merge-env.sh failed"
+                return 1
+            fi
+        fi
+
         write_status "running" "Rebuilding services"
 
         # Rebuild every service EXCEPT this one. If the updater rebuilds

@@ -37,8 +37,11 @@ class _StreamingResponse:
     def __init__(self, *a, **kw): pass
 class _Response:
     def __init__(self, *a, **kw): pass
+class _PlainTextResponse:
+    def __init__(self, *a, **kw): pass
 _fastapi_resp.StreamingResponse = _StreamingResponse
 _fastapi_resp.Response = _Response
+_fastapi_resp.PlainTextResponse = _PlainTextResponse
 sys.modules["fastapi.responses"] = _fastapi_resp
 
 # Redirect log output to a tempdir so the module-level open() succeeds.
@@ -263,10 +266,11 @@ def test_fix_tool_call_params_quotes_bash() -> bool:
     when the path has spaces and isn't quoted."""
     print("\n=== fix_tool_call_params → rewrites Bash command ===")
     original = '{"command": "bash /home/x y/script.sh \\"My sentence\\""}'
-    fixed = sse_patch.fix_tool_call_params("Bash", original)
+    name, fixed = sse_patch.fix_tool_call_params("Bash", original)
     fixed_obj = __import__("json").loads(fixed)
     expected = 'bash "/home/x y/script.sh" "My sentence"'
-    return _check("rewritten command", fixed_obj["command"], expected)
+    ok = _check("tool name unchanged", name, "Bash")
+    return _check("rewritten command", fixed_obj["command"], expected) and ok
 
 
 def test_build_procedure_map() -> bool:

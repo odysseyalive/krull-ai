@@ -152,9 +152,9 @@ export const ENV_SCHEMA: EnvField[] = [
     key: "KRULL_TOOL_CALL_HARD_CAP",
     label: "Tool-call hard cap",
     description:
-      "Maximum tool-calls allowed per conversation turn before the proxy forces a final answer. Guards against tool-call loops.",
+      "Total tool-call turns allowed across the whole conversation before the SSE proxy strips tools and forces a final answer. Guards against tool-call loops.",
     kind: "number",
-    default: "8",
+    default: "20",
     group: "Agents",
     affects: ["krull-sse-proxy"],
   },
